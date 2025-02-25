@@ -30,6 +30,7 @@ def ppo_config(
     # Actor-critic configuration
     normalize_advantage: bool = False,
     clip_eps=0.2,
+    clip_eps_vf=None,
     eps=1e-8,
     actor_fixed_std: Optional[float] = None,
     use_tanh: bool = True,
@@ -112,6 +113,7 @@ def ppo_config(
             "reference_update_period": reference_update_period,
             "normalize_advantage": normalize_advantage,
             "clip_eps": clip_eps,
+            "clip_eps_vf": clip_eps_vf,
             "eps": eps,
             "train_epoach": train_epoach,
             "train_batch_size": train_batch_size

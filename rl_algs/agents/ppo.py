@@ -1,4 +1,4 @@
-from typing import Callable, Sequence, Tuple
+from typing import Callable, Sequence, Tuple, Union
 
 import torch
 from torch import nn
@@ -29,6 +29,7 @@ class PPO:
         reference_update_period: int,
         normalize_advantage: bool = False,
         clip_eps=0.2,
+        clip_eps_vf: Union[None, float] = None,
         eps=1e-8,
         train_epoach = 1,
         train_batch_size = 128
@@ -61,6 +62,7 @@ class PPO:
         self.reference_update_period = reference_update_period
         self.normalize_advantage = normalize_advantage
         self.clip_eps = clip_eps
+        self.clip_eps_vf = clip_eps_vf
         self.eps = eps
         self.train_epoach = train_epoach
         self.train_batch_size = train_batch_size
@@ -102,6 +104,7 @@ class PPO:
         terminals = np.concatenate(terminals, axis=0)
 
         # compute reward to go (namely q_values)
+        assert len(rewards.shape) == 1
         q_values = self._compute_reward_to_go(rewards, terminals)
 
         # move above ndarrays to tensor
@@ -148,7 +151,8 @@ class PPO:
         # compute prob ratio of current policy over the reference
         ratio = torch.exp(logits - logits_ref)
         assert ratio.shape == advantage.shape
-        # advantage = PPO.normalize(advantage, self.eps)
+        if self.normalize_advantage:
+            advantage = PPO.normalize(advantage, self.eps)
 
         # compute loss = min(ratio, clip(ratio, 1-eps, 1+eps)) * Advantage
         loss = torch.clip(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps)
@@ -167,7 +171,10 @@ class PPO:
         self.actor_lr_scheduler.step()
         self.actor_optimizer.zero_grad()
 
-        return {"actor_loss": loss.item(), "actor_grad_norm": grad_norm.item()}
+        # logging
+        clip_fraction = torch.mean((torch.abs(ratio - 1.0) > self.clip_eps).float()).item()
+
+        return {"actor_loss": loss.item(), "actor_grad_norm": grad_norm.item(), "actor_clip_fraction": clip_fraction}
     
     def update_actor(
         self, obs: torch.Tensor, actions: torch.Tensor, advantage: torch.Tensor
@@ -191,22 +198,26 @@ class PPO:
     def update_reference_actor(self):
         self.reference_actor.load_state_dict(self.actor.state_dict())
 
-    def update_critic_batch(self, obs: torch.Tensor, q_values: torch.Tensor):
+    def update_critic_batch(self, obs: torch.Tensor, q_values: torch.Tensor, values_old: torch.Tensor):
         """
         fit v(s) make v(s) predict cost to go at state s
         """
         # compute prediction at states using critic
         values = self.critic(obs)  # [bsize, 1]
+
+        if self.clip_eps_vf is not None:
+            diff = values - values_old
+            values = values_old + torch.clip(diff, -self.clip_eps_vf, self.clip_eps_vf)
+
         assert values.shape[-1] == 1
         values = values.squeeze(1)
         assert values.shape == q_values.shape
-
         # compute mse loss between pred and target
         loss = F.smooth_l1_loss(values, q_values)
 
         # carry one step of optimization
         loss.backward()
-        
+
         # record critic gradient norm
         grad_norm = torch.nn.utils.clip_grad.clip_grad_norm_(
             self.critic.parameters(), 10.0
@@ -216,31 +227,41 @@ class PPO:
         self.critic_lr_scheduler.step()
         self.critic_optimizer.zero_grad()
 
-        return {"critic_loss": loss.item(),  "critic_grad_norm": grad_norm.item()}
-    def update_critic(
-        self, obs: torch.Tensor, q_values: torch.Tensor
-    ):
-        infos = []
-        n = len(obs)
-        for _ in range(self.train_epoach):
-            # generate shuffled indices
-            indices = np.random.permutation(n)
+        info = {"critic_loss": loss.item(),  "critic_grad_norm": grad_norm.item()}
+        if self.clip_eps_vf is not None:
+            clip_fraction = torch.mean((torch.abs(diff) > self.clip_eps_vf).float()).item()
+            info['critic_clip_fraction'] = clip_fraction
 
-            # handle each batch
-            for i in range(0, n, self.train_batch_size):
-                batch_idx = indices[i: i+self.train_batch_size]
-                info = self.update_critic_batch(obs[batch_idx], q_values[batch_idx])
-                infos.append(info)
+        return info
+    
+    # def update_critic(
+    #     self, obs: torch.Tensor, q_values: torch.Tensor
+    # ):
+    #     infos = []
+    #     n = len(obs)
+    #     for _ in range(self.train_epoach):
+    #         # generate shuffled indices
+    #         indices = np.random.permutation(n)
 
-        info_agg = {key: np.mean(list(info[key] for info in infos)) for key in infos[0]}
+    #         # handle each batch
+    #         for i in range(0, n, self.train_batch_size):
+    #             batch_idx = indices[i: i+self.train_batch_size]
+    #             info = self.update_critic_batch(obs[batch_idx], q_values[batch_idx])
+    #             infos.append(info)
 
-        return info_agg
+    #     info_agg = {key: np.mean(list(info[key] for info in infos)) for key in infos[0]}
+
+    #     return info_agg
     
     def update_actor_critic(
         self, obs: torch.Tensor, actions: torch.Tensor, q_values: torch.Tensor, advantage: torch.Tensor
     ):
         infos = []
         n = len(obs)
+
+        # book mark old values
+        values_old = self.critic(obs).detach() # [bsize, 1]
+
         for _ in range(self.train_epoach):
             # generate shuffled indices
             indices = np.random.permutation(n)
@@ -249,7 +270,7 @@ class PPO:
             for i in range(0, n, self.train_batch_size):
                 batch_idx = indices[i: i+self.train_batch_size]
                 info_actor = self.update_actor_batch(obs[batch_idx], actions[batch_idx], advantage[batch_idx])
-                info_critic = self.update_critic_batch(obs[batch_idx], q_values[batch_idx])
+                info_critic = self.update_critic_batch(obs[batch_idx], q_values[batch_idx], values_old[batch_idx])
                 infos.append({**info_actor, **info_critic})
 
         info_agg = {key: np.mean(list(info[key] for info in infos)) for key in infos[0]}
@@ -279,8 +300,8 @@ class PPO:
         advantage = q_values - values
 
         # normalize advantage if required
-        if self.normalize_advantage:
-            advantage = PPO.normalize(advantage, self.eps)
+        # if self.normalize_advantage:
+        #     advantage = PPO.normalize(advantage, self.eps)
 
         return advantage
 

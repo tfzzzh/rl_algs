@@ -6,10 +6,11 @@ total_steps: 1000000
 batch_size: 128
 discount: 0.99
 is_discrete: false
-use_tanh: true
+use_tanh: false
 
 normalize_advantage: true
-clip_eps: 0.1
+clip_eps: 0.2
+clip_eps_vf: 2.0
 
-train_epoach: 2
+train_epoach: 3
 train_batch_size: 128
