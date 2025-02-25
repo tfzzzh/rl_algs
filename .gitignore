@@ -129,3 +129,4 @@ dmypy.json
 .pyre/
 *exp*_results
 data/
+.vscode/

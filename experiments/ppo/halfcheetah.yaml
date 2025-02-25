@@ -1,0 +1,15 @@
+base_config: ppo
+env_name: HalfCheetah-v5
+exp_name: "half_cheetah"
+
+total_steps: 1000000
+batch_size: 128
+discount: 0.99
+is_discrete: false
+use_tanh: true
+
+normalize_advantage: true
+clip_eps: 0.1
+
+train_epoach: 2
+train_batch_size: 128

@@ -3,6 +3,7 @@ from typing import Union
 import torch
 from torch import nn
 import numpy as np
+import rl_algs.utility.pytorch_util as ptu
 
 Activation = Union[str, nn.Module]
 
