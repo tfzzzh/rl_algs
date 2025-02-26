@@ -7,10 +7,11 @@ batch_size: 128
 discount: 0.99
 is_discrete: false
 use_tanh: false
+gae_lambda: 0.95
 
 normalize_advantage: true
 clip_eps: 0.2
-clip_eps_vf: 2.0
+clip_eps_vf: 5.0
 
 train_epoach: 3
 train_batch_size: 128

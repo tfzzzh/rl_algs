@@ -5,6 +5,7 @@ from torch import nn
 from torch.functional import F
 import numpy as np
 
+from .common import compute_gae_advantage
 import rl_algs.utility.pytorch_util as ptu
 
 
@@ -26,13 +27,13 @@ class PPO:
             [torch.optim.Optimizer], torch.optim.lr_scheduler._LRScheduler
         ],
         discount: float,
-        reference_update_period: int,
         normalize_advantage: bool = False,
         clip_eps=0.2,
         clip_eps_vf: Union[None, float] = None,
         eps=1e-8,
         train_epoach = 1,
-        train_batch_size = 128
+        train_batch_size = 128,
+        gae_lambda = 1.0
     ):
         # check if data is valid
         assert discount < 1.0 and discount > 0.0, f"discount = {discount}"
@@ -45,7 +46,7 @@ class PPO:
         self.actor_lr_scheduler = make_actor_schedule(self.actor_optimizer)
 
         # create reference actor
-        self.reference_actor: nn.Module = make_actor(observation_shape, action_dim)
+        # self.reference_actor: nn.Module = make_actor(observation_shape, action_dim)
 
         # create critic and crtic optimizer
         # assumption self.critic(x) is a tensor of shape [bsize, 1]
@@ -59,13 +60,14 @@ class PPO:
         self.observation_shape = observation_shape
         self.action_dim = action_dim
         self.discount = discount
-        self.reference_update_period = reference_update_period
+        # self.reference_update_period = reference_update_period
         self.normalize_advantage = normalize_advantage
         self.clip_eps = clip_eps
         self.clip_eps_vf = clip_eps_vf
         self.eps = eps
         self.train_epoach = train_epoach
         self.train_batch_size = train_batch_size
+        self.gae_lambda = gae_lambda
 
     def get_action(self, observation: np.ndarray) -> np.ndarray:
         """
@@ -105,27 +107,36 @@ class PPO:
 
         # compute reward to go (namely q_values)
         assert len(rewards.shape) == 1
-        q_values = self._compute_reward_to_go(rewards, terminals)
+        # q_values = self._compute_reward_to_go(rewards, terminals)
 
         # move above ndarrays to tensor
         obs = ptu.from_numpy(obs)
         actions = ptu.from_numpy(actions)
         rewards = ptu.from_numpy(rewards)
         terminals = ptu.from_numpy(terminals)
-        q_values = ptu.from_numpy(q_values)
+        # q_values = ptu.from_numpy(q_values)
+
+        # bookmark old policy and old value
+        pi_old: torch.distributions.Distribution = self.actor(obs)
+        logits_old = pi_old.log_prob(actions).detach()
+        values_old = self.critic(obs).detach() # [bsize, 1]
+
 
         # compute advantage using these informations
-        adv = self._compute_advantage(obs, rewards, q_values, terminals)
+        # adv = self._compute_advantage(obs, rewards, q_values, terminals)
+        adv, q_values = compute_gae_advantage(ptu.to_numpy(rewards), ptu.to_numpy(values_old).reshape((-1,)), ptu.to_numpy(terminals), self.discount, self.gae_lambda)
+        adv = ptu.from_numpy(adv)
+        q_values = ptu.from_numpy(q_values)
 
         # update
-        update_info = self.update_actor_critic(obs, actions, q_values, adv)
+        update_info = self.update_actor_critic(obs, actions, q_values, adv, logits_old, values_old)
 
         # use advantage to update actors
         #actor_info = self.update_actor(obs, actions, adv)
 
         # update reference actor when (step + 1) % reference_update_period == 0
         #if (step + 1) % self.reference_update_period == 0:
-        self.update_reference_actor()
+        # self.update_reference_actor()
 
         # use q_values (reward to go) to update critic
         #critic_info = self.update_critic(obs, q_values)
@@ -134,22 +145,22 @@ class PPO:
         return update_info
 
     def update_actor_batch(
-        self, obs: torch.Tensor, actions: torch.Tensor, advantage: torch.Tensor
+        self, obs: torch.Tensor, actions: torch.Tensor, advantage: torch.Tensor, logits_old: torch.Tensor
     ):
         # get policies at current state
         pi: torch.distributions.Distribution = self.actor(obs)
-        pi_ref: torch.distributions.Distribution = self.reference_actor(obs)
+        # pi_ref: torch.distributions.Distribution = self.reference_actor(obs)
 
         # compute log-probs
         # compute log pi(a | s)
         # compute log pi_old(a | s)
         # actions = torch.tensor([ 0.9691, -0.3325, -0.6839,  1.0,  0.98, -0.9231], device='cuda:0') -> nan
         logits = pi.log_prob(actions)  # (bsize,)
-        logits_ref = pi_ref.log_prob(actions).detach() # shall not use gradient
-        assert logits.ndim == 1
+        # logits_ref = pi_ref.log_prob(actions).detach() # shall not use gradient
+        assert logits.ndim == 1 and logits.shape == logits_old.shape
 
         # compute prob ratio of current policy over the reference
-        ratio = torch.exp(logits - logits_ref)
+        ratio = torch.exp(logits - logits_old)
         assert ratio.shape == advantage.shape
         if self.normalize_advantage:
             advantage = PPO.normalize(advantage, self.eps)
@@ -176,24 +187,24 @@ class PPO:
 
         return {"actor_loss": loss.item(), "actor_grad_norm": grad_norm.item(), "actor_clip_fraction": clip_fraction}
     
-    def update_actor(
-        self, obs: torch.Tensor, actions: torch.Tensor, advantage: torch.Tensor
-    ):
-        infos = []
-        n = len(obs)
-        for _ in range(self.train_epoach):
-            # generate shuffled indices
-            indices = np.random.permutation(n)
+    # def update_actor(
+    #     self, obs: torch.Tensor, actions: torch.Tensor, advantage: torch.Tensor
+    # ):
+    #     infos = []
+    #     n = len(obs)
+    #     for _ in range(self.train_epoach):
+    #         # generate shuffled indices
+    #         indices = np.random.permutation(n)
 
-            # handle each batch
-            for i in range(0, n, self.train_batch_size):
-                batch_idx = indices[i: i+self.train_batch_size]
-                info = self.update_actor_batch(obs[batch_idx], actions[batch_idx], advantage[batch_idx])
-                infos.append(info)
+    #         # handle each batch
+    #         for i in range(0, n, self.train_batch_size):
+    #             batch_idx = indices[i: i+self.train_batch_size]
+    #             info = self.update_actor_batch(obs[batch_idx], actions[batch_idx], advantage[batch_idx])
+    #             infos.append(info)
 
-        info_agg = {key: np.mean(list(info[key] for info in infos)) for key in infos[0]}
+    #     info_agg = {key: np.mean(list(info[key] for info in infos)) for key in infos[0]}
 
-        return info_agg
+    #     return info_agg
 
     def update_reference_actor(self):
         self.reference_actor.load_state_dict(self.actor.state_dict())
@@ -254,13 +265,14 @@ class PPO:
     #     return info_agg
     
     def update_actor_critic(
-        self, obs: torch.Tensor, actions: torch.Tensor, q_values: torch.Tensor, advantage: torch.Tensor
+        self, obs: torch.Tensor, actions: torch.Tensor, q_values: torch.Tensor, advantage: torch.Tensor,
+        logits_old: torch.Tensor, values_old: torch.Tensor
     ):
         infos = []
         n = len(obs)
 
         # book mark old values
-        values_old = self.critic(obs).detach() # [bsize, 1]
+        # values_old = self.critic(obs).detach() # [bsize, 1]
 
         for _ in range(self.train_epoach):
             # generate shuffled indices
@@ -269,7 +281,7 @@ class PPO:
             # handle each batch
             for i in range(0, n, self.train_batch_size):
                 batch_idx = indices[i: i+self.train_batch_size]
-                info_actor = self.update_actor_batch(obs[batch_idx], actions[batch_idx], advantage[batch_idx])
+                info_actor = self.update_actor_batch(obs[batch_idx], actions[batch_idx], advantage[batch_idx], logits_old[batch_idx])
                 info_critic = self.update_critic_batch(obs[batch_idx], q_values[batch_idx], values_old[batch_idx])
                 infos.append({**info_actor, **info_critic})
 
@@ -303,7 +315,7 @@ class PPO:
         # if self.normalize_advantage:
         #     advantage = PPO.normalize(advantage, self.eps)
 
-        return advantage
+        return advantage    
 
     def _compute_reward_to_go(
         self, rewards: np.ndarray, terminals: np.ndarray

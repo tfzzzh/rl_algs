@@ -26,7 +26,6 @@ def ppo_config(
     batch_size: int = 128,
     ep_len: Optional[int] = None,
     discount: float = 0.99,
-    reference_update_period: int = 1,
     # Actor-critic configuration
     normalize_advantage: bool = False,
     clip_eps=0.2,
@@ -35,7 +34,8 @@ def ppo_config(
     actor_fixed_std: Optional[float] = None,
     use_tanh: bool = True,
     train_epoach: int = 5,
-    train_batch_size: int = 128
+    train_batch_size: int = 128,
+    gae_lambda: float = 1.0
 ):
     def make_critic(observation_shape: Tuple[int, ...]) -> nn.Module:
         return ValueCritic(
@@ -110,13 +110,13 @@ def ppo_config(
             "make_actor_optimizer": make_actor_optimizer,
             "make_actor_schedule": make_lr_schedule,
             "discount": discount,
-            "reference_update_period": reference_update_period,
             "normalize_advantage": normalize_advantage,
             "clip_eps": clip_eps,
             "clip_eps_vf": clip_eps_vf,
             "eps": eps,
             "train_epoach": train_epoach,
-            "train_batch_size": train_batch_size
+            "train_batch_size": train_batch_size,
+            "gae_lambda": gae_lambda
         },
         "log_name": log_string,
         "total_steps": total_steps,

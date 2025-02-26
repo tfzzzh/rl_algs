@@ -1,6 +1,10 @@
 # Reinforcement Learning Algorithms
 This repository contains a list of reinforcement learning algorithms.
 
+## Experimental Results
+Evaluation rewards of DDPG and PPO on  halfcheetah task:
+![Evaluation Reward](figures/results.png)
+
 ## Install The Package
 Follow these steps to set up the environment
 1. Create a new virtual environment:
