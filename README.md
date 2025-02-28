@@ -2,7 +2,7 @@
 This repository contains a list of reinforcement learning algorithms.
 
 ## Experimental Results
-Evaluation rewards of DDPG and PPO on  halfcheetah task:
+Evaluation rewards on halfcheetah task:
 ![Evaluation Reward](figures/results.png)
 
 ## Install The Package
