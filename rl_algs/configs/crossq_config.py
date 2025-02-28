@@ -6,16 +6,15 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from rl_algs.networks.mlp_policy import MLPPolicy
-from rl_algs.networks.state_action_value_critic import StateActionCritic
-import rl_algs.utility.pytorch_util as ptu
+from rl_algs.networks.mlp_policy import BNMLPPolicy
+from rl_algs.networks.state_action_value_critic import BNStateActionCritic
 
 from gymnasium.wrappers import RescaleAction
 from gymnasium.wrappers import ClipAction
 from gymnasium.wrappers import RecordEpisodeStatistics
 
 
-def ddpg_config(
+def crossq_config(
     env_name: str,
     exp_name: Optional[str] = None,
     hidden_size: int = 128,
@@ -29,25 +28,20 @@ def ddpg_config(
     replay_buffer_capacity: int = 1000000,
     ep_len: Optional[int] = None,
     discount: float = 0.99,
-    use_soft_target_update: bool = False,
-    target_update_period: Optional[int] = None,
-    soft_target_update_rate: Optional[float] = None,
     # Actor-critic configuration
-    actor_gradient_type="reinforce",  # One of "reinforce" or "reparametrize"
     num_actor_samples: int = 1,
     num_critic_updates: int = 1,
     # Settings for multiple critics
     num_critic_networks: int = 1,
-    target_critic_backup_type: str = "mean",  # One of "doubleq", "min", or "mean"
     # Soft actor-critic
     backup_entropy: bool = True,
     use_entropy_bonus: bool = True,
     temperature: float = 0.1,
     actor_fixed_std: Optional[float] = None,
-    use_tanh: bool = True,
+    use_tanh: bool = False,
 ):
     def make_critic(observation_shape: Tuple[int, ...], action_dim: int) -> nn.Module:
-        return StateActionCritic(
+        return BNStateActionCritic(
             ob_dim=np.prod(observation_shape),
             ac_dim=action_dim,
             n_layers=num_layers,
@@ -57,7 +51,7 @@ def ddpg_config(
     def make_actor(observation_shape: Tuple[int, ...], action_dim: int) -> nn.Module:
         assert len(observation_shape) == 1
         if actor_fixed_std is not None:
-            return MLPPolicy(
+            return BNMLPPolicy(
                 ac_dim=action_dim,
                 ob_dim=np.prod(observation_shape),
                 discrete=False,
@@ -68,7 +62,7 @@ def ddpg_config(
                 fixed_std=actor_fixed_std,
             )
         else:
-            return MLPPolicy(
+            return BNMLPPolicy(
                 ac_dim=action_dim,
                 ob_dim=np.prod(observation_shape),
                 discrete=False,
@@ -102,10 +96,9 @@ def ddpg_config(
             )
         )
 
-    log_string = "{}_{}_{}_s{}_l{}_alr{}_clr{}_b{}_d{}".format(
-        exp_name or "offpolicy_ac",
+    log_string = "{}_{}_s{}_l{}_alr{}_clr{}_b{}_d{}".format(
+        exp_name or "offpolicy_crossq",
         env_name,
-        actor_gradient_type,
         hidden_size,
         num_layers,
         actor_learning_rate,
@@ -117,14 +110,6 @@ def ddpg_config(
     if use_entropy_bonus:
         log_string += f"_t{temperature}"
 
-    if use_soft_target_update:
-        log_string += f"_stu{soft_target_update_rate}"
-    else:
-        log_string += f"_htu{target_update_period}"
-
-    if target_critic_backup_type != "mean":
-        log_string += f"_{target_critic_backup_type}"
-
     return {
         "agent_kwargs": {
             "make_critic": make_critic,
@@ -135,20 +120,12 @@ def ddpg_config(
             "make_actor_schedule": make_lr_schedule,
             "num_critic_updates": num_critic_updates,
             "discount": discount,
-            "actor_gradient_type": actor_gradient_type,
             "num_actor_samples": num_actor_samples,
             "num_critic_updates": num_critic_updates,
             "num_critic_networks": num_critic_networks,
-            "target_critic_backup_type": target_critic_backup_type,
             "use_entropy_bonus": use_entropy_bonus,
             "backup_entropy": backup_entropy,
-            "temperature": temperature,
-            "target_update_period": target_update_period
-            if not use_soft_target_update
-            else None,
-            "soft_target_update_rate": soft_target_update_rate
-            if use_soft_target_update
-            else None,
+            "temperature": temperature
         },
         "replay_buffer_capacity": replay_buffer_capacity,
         "log_name": log_string,

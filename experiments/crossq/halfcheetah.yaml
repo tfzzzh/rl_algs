@@ -1,0 +1,18 @@
+base_config: crossq
+env_name: HalfCheetah-v5
+exp_name: crossq
+
+total_steps: 1000000
+random_steps: 5000
+training_starts: 10000
+
+batch_size: 128
+replay_buffer_capacity: 100000
+
+discount: 0.99
+num_critic_updates: 1
+
+use_entropy_bonus: true
+backup_entropy: true
+temperature: 0.1
+use_tanh: true

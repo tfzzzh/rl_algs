@@ -127,6 +127,9 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# local file that shall ignored
 *exp*_results
 data/
 .vscode/
+test.ipynb

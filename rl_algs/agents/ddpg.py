@@ -7,7 +7,7 @@ import numpy as np
 import rl_algs.utility.pytorch_util as ptu
 
 
-class DDPG(nn.Module):
+class DDPG:
     def __init__(
         self,
         observation_shape: Sequence[int],
@@ -39,7 +39,7 @@ class DDPG(nn.Module):
         temperature: float = 0.0,
         backup_entropy: bool = True,
     ):
-        super().__init__()
+        # super().__init__()
 
         assert target_critic_backup_type in [
             "doubleq",
