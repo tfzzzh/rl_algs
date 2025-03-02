@@ -1,3 +1,4 @@
+from typing import Dict
 import os
 from tensorboardX import SummaryWriter
 import numpy as np
@@ -13,6 +14,10 @@ class Logger:
 
     def log_scalar(self, scalar, name, step_):
         self._summ_writer.add_scalar('{}'.format(name), scalar, step_)
+
+    def log_metrics(self, metrics: Dict, step: int):
+        for k, v in metrics.items():
+            self.log_scalar(v, k, step)
 
     def log_scalars(self, scalar_dict, group_name, step, phase):
         """Will log all scalars in the same plot."""

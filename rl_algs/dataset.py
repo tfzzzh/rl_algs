@@ -10,16 +10,22 @@ class DataHandler:
         self.dataset = minari.load_dataset(dataset_name, download=download)
         self.dataset_env = self.dataset.recover_environment()
         # self.env_name = self.env.unwrapped.spec.id
+        self._info = None
 
     def create_dataloader(self, batch_size: int, shuffle: bool, device: torch.device, max_length: int) -> torch.utils.data.DataLoader:
-        collate_fn = CollateFunc(device, max_length)
+        info = self.statistics_info
+        collate_fn = CollateFunc(device, max_length, info['state_mean'], info['state_std'])
         dataloader = DataLoader(
             self.dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=collate_fn
         )
         return dataloader
 
-    def get_statistics(self):
+    @property
+    def statistics_info(self):
         # TODO: refine computation of this function
+        if self._info is not None:
+            return self._info
+
         states, traj_lens, returns = [], [], []
         for episode_data in self.dataset.iterate_episodes():
             states.append(episode_data.observations)
@@ -43,13 +49,17 @@ class DataHandler:
             "state_std": state_std,
         }
 
+        self._info = info
+
         return info
 
 
 class CollateFunc:
-    def __init__(self, device: torch.device, max_length: int):
+    def __init__(self, device: torch.device, max_length: int, state_mean=None, state_std=None):
         self.device = device
         self.max_length = max_length
+        self.state_mean = state_mean
+        self.state_std = state_std
 
     def __call__(self, batch):
         lengths = [len(x.observations) for x in batch]
@@ -79,8 +89,13 @@ class CollateFunc:
         # foreach sampled episode perform transformation
         for i, x in enumerate(batch):
             start, end = starts[i], ends[i]
+            
+            # noramlize observation
+            observation = x.observations[start:end]
+            if self.state_mean is not None and self.state_std is not None:
+                observation = (observation - self.state_mean) / (self.state_std + 1e-8)
+            observations.append(observation)
 
-            observations.append(x.observations[start:end])
             actions.append(x.actions[start:end])
             rewards.append(x.rewards[start:end])
             terminations.append(x.terminations[start:end])

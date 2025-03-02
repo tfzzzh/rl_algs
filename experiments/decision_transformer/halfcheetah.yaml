@@ -1,0 +1,11 @@
+base_config: decision_transformer
+dataset_name: mujoco/halfcheetah/medium-v0
+exp_name: dt
+
+ep_len: 2000
+n_layer: 3
+n_head: 1
+hidden_size: 128
+dropout: 0.1
+total_steps: 100000
+batch_max_length: 20

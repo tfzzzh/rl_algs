@@ -4,6 +4,7 @@ import torch.nn as nn
 from typing import Optional
 
 from .gpt import GPT, GPTConfig
+from rl_algs.utility import pytorch_util as ptu
 
 
 class DecisionTransformer(nn.Module):
@@ -16,7 +17,6 @@ class DecisionTransformer(nn.Module):
         state_dim,
         act_dim,
         hidden_size,
-        max_length=None,
         max_ep_len=4096,
         action_tanh=True,
         **kwargs
@@ -24,7 +24,6 @@ class DecisionTransformer(nn.Module):
         super().__init__()
         self.state_dim = state_dim
         self.act_dim = act_dim
-        self.max_length = max_length
 
         self.hidden_size = hidden_size
 
@@ -57,6 +56,9 @@ class DecisionTransformer(nn.Module):
         self.predict_return = torch.nn.Linear(
             hidden_size, 1
         )  # prediction of cost to go
+
+        # push model to device
+        self.to(ptu.device)
 
     def forward(
         self,

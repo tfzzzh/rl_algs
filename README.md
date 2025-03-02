@@ -39,3 +39,5 @@ tensorboard --logdir ./data
 
 This project was inspired by and adapted from the following repositories:
 - [Berkeley CS285](https://github.com/berkeleydeeprlcourse/homework_fall2023)
+- [NonGPT](https://github.com/karpathy/nanoGPT)
+- [Decision Transformer](https://github.com/kzl/decision-transformer)
