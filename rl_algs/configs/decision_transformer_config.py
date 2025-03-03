@@ -16,6 +16,7 @@ def decision_transformer_config(
     dataset_name,
     exp_name,
     ep_len,
+    eval_target_return: float,
     # dt config
     dt_max_infer_length: Optional[int]=None, # max inference length of dt
     action_tanh: bool =True,
@@ -35,7 +36,8 @@ def decision_transformer_config(
     shuffle: bool = True,
     batch_max_length:int = 20,
     # evaluate config
-    discount: float = 0.99
+    discount: float = 0.99,
+    reward_scale:float = 1000.0,
 ):
     def make_datahandler() -> DataHandler:
         '''
@@ -72,7 +74,7 @@ def decision_transformer_config(
         loss_fn = torch.nn.MSELoss()
         return loss_fn
     
-    log_string = "{}_{}_layer{}_head{}_n_emb{}_alr{}_awd{}_bsize{}_d{}".format(
+    log_string = "{}_{}_layer{}_head{}_n_emb{}_alr{}_awd{}_bsize{}_d{}_K{}".format(
         "dt",
         exp_name,
         n_layer,
@@ -82,6 +84,7 @@ def decision_transformer_config(
         actor_weight_decay,
         batch_size,
         discount,
+        batch_max_length
     )
 
     config_dict = {
@@ -101,7 +104,9 @@ def decision_transformer_config(
         "discount": discount,
         "make_datahandler": make_datahandler,
         "dt_max_length": dt_max_infer_length,
-        "dataset_name": dataset_name
+        "dataset_name": dataset_name,
+        "reward_scale": reward_scale,
+        "eval_target_return": eval_target_return
     }
 
     return config_dict

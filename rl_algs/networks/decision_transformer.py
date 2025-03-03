@@ -84,7 +84,7 @@ class DecisionTransformer(nn.Module):
         batch_size, seq_length = states.shape[0], states.shape[1]
         assert states.shape == (batch_size, seq_length, self.state_dim)
         assert actions.shape == (batch_size, seq_length, self.act_dim)
-        assert returns_to_go.shape == (batch_size, seq_length, 1)
+        assert returns_to_go.shape == (batch_size, seq_length, 1), f"{returns_to_go.shape}"
         assert timesteps.shape == (batch_size, seq_length)
         assert timesteps.dtype == torch.long
 

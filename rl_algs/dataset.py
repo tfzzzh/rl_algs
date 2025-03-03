@@ -12,9 +12,12 @@ class DataHandler:
         # self.env_name = self.env.unwrapped.spec.id
         self._info = None
 
-    def create_dataloader(self, batch_size: int, shuffle: bool, device: torch.device, max_length: int) -> torch.utils.data.DataLoader:
+    def create_dataloader(self, 
+        batch_size: int, shuffle: bool, device: torch.device, max_length: int,
+        reward_scale: float
+    ) -> torch.utils.data.DataLoader:
         info = self.statistics_info
-        collate_fn = CollateFunc(device, max_length, info['state_mean'], info['state_std'])
+        collate_fn = CollateFunc(device, max_length, reward_scale, info['state_mean'], info['state_std'])
         dataloader = DataLoader(
             self.dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=collate_fn
         )
@@ -55,11 +58,12 @@ class DataHandler:
 
 
 class CollateFunc:
-    def __init__(self, device: torch.device, max_length: int, state_mean=None, state_std=None):
+    def __init__(self, device: torch.device, max_length: int, reward_scale:float, state_mean=None, state_std=None):
         self.device = device
         self.max_length = max_length
         self.state_mean = state_mean
         self.state_std = state_std
+        self.reward_scale = reward_scale
 
     def __call__(self, batch):
         lengths = [len(x.observations) for x in batch]
@@ -107,7 +111,7 @@ class CollateFunc:
             reward_to_go = reward_to_go[::-1].cumsum()
             reward_to_go = reward_to_go[::-1]
             reward_to_go = np.expand_dims(reward_to_go, axis=1)
-            rtgs.append(np.ascontiguousarray(reward_to_go))
+            rtgs.append(np.ascontiguousarray(reward_to_go / self.reward_scale))
 
             # attention mask
             masks.append(np.ones(end - start, dtype=np.bool_))
