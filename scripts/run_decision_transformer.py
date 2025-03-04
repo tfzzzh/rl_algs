@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import torch
 import tqdm
@@ -74,6 +75,10 @@ def run_training_loop(config: dict, logger: Logger, args: argparse.Namespace):
         **config["agent_kwargs"],
     )
 
+    # create checkpoint dir
+    checkpoint_dir = os.path.join(logger._log_dir, "checkpoints")
+    os.makedirs(checkpoint_dir, exist_ok=True)
+
     dataloader_iter = iter(dataloader)
     for step in tqdm.trange(config["total_steps"], dynamic_ncols=True):
         try:
@@ -90,6 +95,11 @@ def run_training_loop(config: dict, logger: Logger, args: argparse.Namespace):
             timesteps=batch['timesteps'],
             attention_mask=batch['masks']
         )
+
+        # checkpoint
+        if step % args.checkpoint_interval == 0 or step == config["total_steps"] - 1:
+            checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_{step}.pt")
+            agent.save_checkpoint(checkpoint_path)
 
         # logging
         if step % args.log_interval == 0:
@@ -199,6 +209,7 @@ def main():
     parser.add_argument("--no_gpu", "-ngpu", action="store_true")
     parser.add_argument("--which_gpu", "-g", default=0)
     parser.add_argument("--log_interval", type=int, default=10)
+    parser.add_argument("--checkpoint_interval", type=int, default=100)
 
     args = parser.parse_args()
 

@@ -96,7 +96,40 @@ class DecisionTransformerAgent:
         }
 
         return info
+    
+    def save_checkpoint(self, path: str):
+        '''
+        save agent's state to a checkpoint file
+        '''
+        checkpoint = {
+            'model_state_dict': self.actor.state_dict(),
+            'optimizer_state_dict': self.actor_optimizer.state_dict(),
+            'lr_scheduler_state_dict': self.actor_lr_scheduler.state_dict(),
+            'observation_shape': self.observation_shape,
+            'action_dim': self.action_dim,
+            'clip_grad_norm': self.clip_grad_norm
+        }
 
+        torch.save(checkpoint, path)
+        print(f"save model to checkpoint: {path}")
+
+    def load_from_checkpoint(self, path):
+        '''
+        load model and optimizer state from disk,  
+        '''
+        checkpoint = torch.load(path)
+
+        # check bookmarked data
+        assert self.observation_shape == checkpoint['observation_shape']
+        assert self.action_dim == checkpoint['action_dim']
+        assert np.allclose(self.clip_grad_norm, checkpoint['clip_grad_norm'])
+
+        self.actor.load_state_dict(checkpoint['model_state_dict'])
+        self.actor_optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        self.actor_lr_scheduler.load_state_dict(checkpoint['lr_scheduler_state_dict'])
+
+        # check model device 
+        assert next(self.actor.parameters()).device == ptu.device
 
 class DtInferenceState:
     """

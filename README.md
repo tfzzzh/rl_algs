@@ -1,9 +1,17 @@
 # Reinforcement Learning Algorithms
-This repository contains a list of reinforcement learning algorithms.
+This repository contains a list of reinforcement learning algorithms. Supported algorithms:
+- DDPG
+- REINFORCE
+- PPO
+- CrossQ
+- Decision Transformer
 
 ## Experimental Results
 Evaluation rewards on halfcheetah task:
+1. Algorithms explore the environment directly (DDPG, PPO, CrossQ)
 ![Evaluation Reward](figures/results.png)
+2. Behavior clone methods trained using `mujoco/halfcheetah/medium-v0` dataset
+![Evaluation Reward](figures/dt_result.png)
 
 ## Install The Package
 Follow these steps to set up the environment
