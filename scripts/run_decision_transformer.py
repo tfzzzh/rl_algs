@@ -1,4 +1,3 @@
-import os
 import numpy as np
 import torch
 import tqdm
@@ -75,10 +74,6 @@ def run_training_loop(config: dict, logger: Logger, args: argparse.Namespace):
         **config["agent_kwargs"],
     )
 
-    # create checkpoint dir
-    checkpoint_dir = os.path.join(logger._log_dir, "checkpoints")
-    os.makedirs(checkpoint_dir, exist_ok=True)
-
     dataloader_iter = iter(dataloader)
     for step in tqdm.trange(config["total_steps"], dynamic_ncols=True):
         try:
@@ -96,11 +91,6 @@ def run_training_loop(config: dict, logger: Logger, args: argparse.Namespace):
             attention_mask=batch['masks']
         )
 
-        # checkpoint
-        if step % args.checkpoint_interval == 0 or step == config["total_steps"] - 1:
-            checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_{step}.pt")
-            agent.save_checkpoint(checkpoint_path)
-
         # logging
         if step % args.log_interval == 0:
             logger.log_metrics(update_info, step)
@@ -108,7 +98,7 @@ def run_training_loop(config: dict, logger: Logger, args: argparse.Namespace):
 
         # evaluation
         if step % args.eval_interval == 0:
-            trajectories = sample_n_trajectories(
+            trajectories = rollout_trajectory(
                 env,
                 policy=agent,
                 ntraj=args.num_eval_trajectories,
@@ -141,7 +131,7 @@ def rollout_trajectory(
     # reset inference state
     agent.infer_state.reset(ob, target_return)
     while True:
-        # sampling an action
+        # TODO use the most recent ob to decide what to do
         ac = agent.get_action()
 
         # TODO: take that action and get reward and next ob
@@ -185,14 +175,13 @@ def rollout_trajectory(
     }
 
 def sample_n_trajectories(
-    env: gym.Env, policy: DecisionTransformerAgent, ntraj: int, max_length: int,
-    target_return: float
+    env: gym.Env, policy: DecisionTransformerAgent, ntraj: int, max_length: int, render: bool = False
 ):
     """Collect ntraj rollouts."""
     trajs = []
     for _ in range(ntraj):
         # collect rollout
-        traj = rollout_trajectory(env, policy, max_length, target_return)
+        traj = rollout_trajectory(env, policy, max_length, render)
         trajs.append(traj)
     return trajs
 
@@ -201,15 +190,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config_file", "-cfg", type=str, required=True)
 
-    parser.add_argument("--eval_interval", "-ei", type=int, default=100)
-    parser.add_argument("--num_eval_trajectories", "-neval", type=int, default=2)
+    parser.add_argument("--eval_interval", "-ei", type=int, default=20)
+    parser.add_argument("--num_eval_trajectories", "-neval", type=int, default=10)
     parser.add_argument("--num_render_trajectories", "-nvid", type=int, default=0)
 
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--no_gpu", "-ngpu", action="store_true")
     parser.add_argument("--which_gpu", "-g", default=0)
     parser.add_argument("--log_interval", type=int, default=10)
-    parser.add_argument("--checkpoint_interval", type=int, default=100)
 
     args = parser.parse_args()
 

@@ -18,6 +18,7 @@ Follow these steps to set up the environment
 1. Create a new virtual environment:
 ```shell
 conda create -n rl_env python=3.12
+conda activate rl_env
 ```
 2. Intall PyTorch:
 ```shell

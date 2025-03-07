@@ -183,7 +183,7 @@ class DtInferenceState:
             new_state (np.ndarray): next state, shape == observation_shape
         """
         assert len(self.actions) > 0, 'must call reset before update'
-        self.actions[-1] = action
+        self.actions[-1][:] = action
 
         # compute target_rtg after observe reward
         rtg = self.reward_to_go[-1][0]
