@@ -1,0 +1,1 @@
+python ./scripts/run_ddpg.py -cfg ./experiments/ddpg/halfcheetah_reparametrize.yaml

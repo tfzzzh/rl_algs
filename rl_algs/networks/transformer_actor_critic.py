@@ -3,7 +3,7 @@ import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 from torch import nn
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Sequence
 
 from .gpt import GPT, GPTConfig
 import rl_algs.utility.pytorch_util as ptu
@@ -79,9 +79,10 @@ class TransformerActorCritic(nn.Module):
         self.to(ptu.device)
 
     def _build_actor_head(self, actor_head_config):
+        # only consider continuous case
         net = ptu.build_mlp(
             input_size=self.encoder_out_dim,
-            output_size=self.act_dim,
+            output_size=2 * self.act_dim,
             n_layers=actor_head_config["n_layers"],
             size=actor_head_config["size"],
             activation=actor_head_config["activation"],
@@ -184,6 +185,18 @@ class TransformerActorCritic(nn.Module):
 
         # action_dist is only valid under attention_mask[-1]
         return value
+    
+    # def full_batched_actor_forward(self, features: torch.Tensor, attention_mask: Optional[torch.Tensor] = None):
+    #     batch_size, seq_length, dim = features.shape
+
+    #     # reshape features into 2 dimension
+    #     features = features.reshape(batch_size * seq_length, dim)
+
+
+    #     return self.actor_head.forward(feature_batch)
+    
+    # def full_batched_critic_forward(self, features: torch.Tensor, attention_mask: Optional[torch.Tensor] = None):
+    #     pass
 
 
 class DistributionHead(nn.Module):
@@ -192,17 +205,19 @@ class DistributionHead(nn.Module):
         action_space: spaces.Space,
         network: nn.Module,
         log_std_init_value: float = 1.0,
+        use_constant_std: bool = False
     ):
         super().__init__()
 
         self.action_space = action_space
         self.net = network
 
-        if isinstance(action_space, spaces.Box):
+        if isinstance(action_space, spaces.Box) and use_constant_std:
             self.log_std = nn.Parameter(
                 torch.tensor(log_std_init_value, dtype=torch.float32),
                 requires_grad=True,
             )
+        self.use_constant_std = use_constant_std
 
         self.to(ptu.device)
 
@@ -219,7 +234,13 @@ class DistributionHead(nn.Module):
 
         # genenrate output according to type of the space
         if isinstance(self.action_space, spaces.Box):
-            return torch.distributions.Normal(loc=logits, scale=torch.exp(self.log_std))
+            if self.use_constant_std:
+                return torch.distributions.Normal(loc=logits, scale=torch.exp(self.log_std))
+            else:
+                act_dim = logits.shape[1] // 2
+                mean, std = torch.split(logits, act_dim, dim=1)
+                std = torch.nn.functional.softplus(std) + 1e-2
+                return torch.distributions.Normal(loc=mean, scale=std)
 
         elif isinstance(self.action_space, spaces.Discrete):
             prob = torch.softmax(logits, dim=-1)
@@ -244,6 +265,8 @@ class TransformerEncoder(nn.Module):
         dropout,
     ):
         super().__init__()
+        assert isinstance(state_dim, (int, np.integer)), f"state_dim={state_dim} type: {type(state_dim)}"
+
         self.state_dim = state_dim
         self.act_dim = act_dim
         self.n_embd = n_embd
@@ -258,6 +281,9 @@ class TransformerEncoder(nn.Module):
         )
 
         self.transformer = GPT(self.gpt_config)
+
+        # normalize state
+        # self.bn_state = nn.BatchNorm1d(state_dim)
 
         # construct embedding matrix for time, state and action
         self.embed_timestep = nn.Embedding(max_ep_len, n_embd)
@@ -290,6 +316,10 @@ class TransformerEncoder(nn.Module):
         assert actions.shape == (batch_size, seq_length, self.act_dim)
         assert timesteps.shape == (batch_size, seq_length)
         assert timesteps.dtype == torch.long
+
+        # TODO handle batch normalize when attention mask is not null
+        # observations = self.bn_state(observations.reshape(-1, self.state_dim))
+        # observations = observations.reshape(batch_size, seq_length, self.state_dim)
 
         if attention_mask is None:
             # attention mask for GPT: 1 if can be attended to, 0 if not
@@ -437,199 +467,6 @@ class TransformerEncoderContext:
         )
         assert context["actions"].shape == (1, context_length, self.action_dim)
         assert context["timesteps"].shape == (1, context_length)
-
-
-# Currently it only support for rolling one env
-class RolloutBuffer:
-    def __init__(
-        self,
-        obs_shape,
-        max_ep_len,
-        action_dim,
-        env: gym.Env,
-        actor_critic: TransformerActorCritic,
-        gamma: float,
-        gae_lambda: float,
-        max_context_len=None,
-    ):
-        self.obs_shape = obs_shape
-        self.max_ep_len = max_ep_len
-        self.env = env
-        self.actor_critic = actor_critic
-        self.max_context_len = max_context_len
-        self.action_dim = action_dim
-        self.gamma = gamma
-        self.gae_lambda = gae_lambda
-
-        self.length = 0
-        self.observations = np.zeros(
-            (self.max_ep_len, *self.obs_shape), dtype=np.float32
-        )
-        self.actions = np.zeros((self.max_ep_len, self.action_dim), dtype=np.float32)
-        self.timesteps = np.zeros(self.max_ep_len, dtype=np.long)
-        self.rewards = np.zeros(self.max_ep_len, dtype=np.float32)
-        self.returns = np.zeros(self.max_ep_len, dtype=np.float32)
-        self.values = np.zeros(self.max_ep_len, dtype=np.float32)
-        self.log_probs = np.zeros(self.max_ep_len, dtype=np.float32)
-        self.advantages = np.zeros(self.max_ep_len, dtype=np.float32)
-        self.dones = np.ones(self.max_ep_len, dtype=np.float32)
-
-    def expand_episode(self):
-        env = self.env
-        actor_critic = self.actor_critic
-
-        ob, init_info = env.reset()
-        self.reset()
-        steps = 0
-        self.observations[0][:] = ob
-
-        while True:
-            # get action from actor
-            # construct context for actor
-            context = self.get_context()
-            with torch.no_grad():
-                features = actor_critic.encode(**context)
-                action_dist = actor_critic.actor_forward(features)
-
-                action = action_dist.sample()
-                log_prob = action_dist.log_prob(action).squeeze(0).numpy()
-                action = action.squeeze(0).numpy()
-                value = actor_critic.critic_forward(features).squeeze(0).numpy()
-
-                assert action.shape == (self.action_dim,)
-                assert len(value.shape) == 0
-                assert len(log_prob.shape) == 0
-
-            # take that action and get reward and next ob
-            next_ob, reward, terminated, truncated, info = env.step(action)
-
-            # rollout can end due to done, or due to max_length
-            rollout_done = terminated or truncated or (steps+1) >= self.max_ep_len
-
-            # record result of taking that action
-            self.timesteps[steps] = steps
-            self.actions[steps][:] = action
-            self.rewards[steps] = reward
-            self.dones[steps] = terminated
-            self.log_probs[steps] = log_prob
-            self.length += 1
-
-            steps += 1
-            # end the rollout if the rollout ended
-            if rollout_done:
-                break
-
-            ob = next_ob  # jump to next timestep
-            # next state when rollout_done is not recorded
-            self.observations[steps][:] = ob
-
-        env.close()
-        assert (self.length == steps )
-
-        # episode ready compute returns and advantages
-        self.compute_returns_and_advantages()
-
-    def reset(self):
-        self.length = 0
-        self.observations[:] = 0.0
-        self.actions[:] = 0.0
-        self.timesteps[:] = 0
-        self.rewards[:] = 0.0
-        self.returns[:] = 0.0
-        self.values[:] = 0.0
-        self.log_probs[:] = 0.0
-        self.advantages[:] = 0.0
-        self.dones[:] = 1.0
-
-    def get_context(self) -> Dict[str, torch.Tensor]:
-        assert self.length != 0
-
-        observations = self.observations
-        actions = self.actions
-        timesteps = self.timesteps
-        max_len = self.max_context_len
-        context_length = self.length
-
-        if max_len is not None:
-            assert max_len > 0
-            context_length = min(context_length, max_len)
-
-        # each of shape [T,?]
-        start_idx = self.length - context_length
-        observations = observations[start_idx : self.length]
-        observations = observations.reshape((context_length, -1))
-        actions = actions[start_idx : self.length]
-        timesteps = timesteps[start_idx : self.length]
-
-        context = {
-            "observations": observations[None],
-            "actions": actions[None],
-            "timesteps": timesteps[None],
-        }
-
-        # check shape
-        self._check_context_shape(context, max_len)
-
-        context = ptu.from_numpy(context)
-        context["attention_mask"] = None
-
-        return context
-
-    def _check_context_shape(self, context, max_len):
-        context_length = (
-            len(self.timesteps)
-            if max_len is None
-            else min(len(self.timesteps), max_len)
-        )
-        assert context["observations"].shape == (
-            1,
-            context_length,
-            np.prod(self.observation_shape),
-        )
-        assert context["actions"].shape == (1, context_length, self.action_dim)
-        assert context["timesteps"].shape == (1, context_length)
-
-    def __len__(self):
-        return self.length
-
-    def get_sample(self, seqlen) -> Dict[str, torch.Tensor]:
-        """sampling a subsequence with length seqlen from the buffer"""
-        # make seqlen <= length
-        seqlen = min(seqlen, self.length)
-        assert seqlen > 0
-
-        # sampling a valid start index
-        start_idx = np.random.randint(0, self.length - seqlen + 1)
-
-        # returns {obs, acs, values, log_probs, advantanges, returns}
-        batch = {
-            "observations": self.observations[start_idx : start_idx + seqlen][None],
-            "actions": self.actions[start_idx : start_idx + seqlen][None],
-            "timesteps": self.timesteps[start_idx : start_idx + seqlen][None],
-            "rewards": self.rewards[start_idx : start_idx + seqlen][None],
-            "returns": self.returns[start_idx : start_idx + seqlen][None],
-            "values": self.values[start_idx : start_idx + seqlen][None],
-            "log_probs": self.log_probs[start_idx : start_idx + seqlen][None],
-            "advantages": self.advantages[start_idx : start_idx + seqlen][None],
-            "dones": self.dones[start_idx : start_idx + seqlen][None],
-        }
-
-        return batch
-
-    def compute_returns_and_advantages(self):
-        adv, ret = compute_gae_advantage(
-            self.rewards[: self.length],
-            self.values[: self.length],
-            self.dones[: self.length],
-            self.gamma,
-            self.gae_lambda,
-        )
-
-        self.advantages[: self.length] = adv
-        self.returns[: self.length] = ret
-
-    # def compute_metrics(self) -> Dict[str, float]:
-    #     pass
 
 
 # regression test
