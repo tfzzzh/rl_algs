@@ -4,25 +4,25 @@ exp_name: "half_cheetah"
 
 total_steps: 1000000
 discount: 0.99
-gae_lambda: 1.0
+gae_lambda: 0.95
 
-normalize_advantage: false
-clip_eps: 0.2
-clip_eps_vf: 2.0
+normalize_advantage: true
+clip_eps: 0.3
+clip_eps_vf: 0.5
 
 train_epoach: 3
 train_batch_size: 1000
 max_context_len: 1000
-critic_loss_coef: 1.0
-gpt_n_embd: 64
+critic_loss_coef: 10.0
+gpt_n_embd: 128
 gpt_n_layer: 3
 gpt_n_head: 1
-dropout: 0.1
+dropout: 0.0
 actor_n_layers: 1
-actor_size: 64
+actor_size: 128
 log_std_init_value: 1.0
 critic_n_layers: 3
 critic_size: 128
 ep_len: 1000
 num_eval_episode: 2
-learning_rate: 0.0003
+learning_rate: 0.0001

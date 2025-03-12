@@ -30,7 +30,7 @@ def ppo_transformer_config(
     gae_lambda: float = 1.0,
     max_context_len: Optional[int] = None,
     critic_loss_coef: float = 0.5,
-    max_grad_norm=10.0,
+    max_grad_norm=0.5,
     # gpt_config
     gpt_n_embd: int = 128,
     gpt_n_layer: int = 1,
@@ -45,7 +45,7 @@ def ppo_transformer_config(
     # critic_head_config
     critic_n_layers: int = 2,
     critic_size: int = 120,  # layer size
-    critic_activation: str = "tanh",
+    critic_activation: str = "relu",
     critic_output_activation: str = "identity",
     # script config
     total_steps: int = 300000,
@@ -96,8 +96,8 @@ def ppo_transformer_config(
         return actor_critic
 
     def make_optimizer(params: torch.nn.ParameterList) -> torch.optim.Optimizer:
-        return torch.optim.Adam(params, lr=learning_rate)
-        # return torch.optim.AdamW(params, lr=learning_rate, weight_decay=weight_decay)
+        # return torch.optim.Adam(params, lr=learning_rate)
+        return torch.optim.AdamW(params, lr=learning_rate, weight_decay=weight_decay)
 
     def make_lr_schedule(
         optimizer: torch.optim.Optimizer,

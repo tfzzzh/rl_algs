@@ -29,7 +29,7 @@ class PPOTransformer:
             [torch.optim.Optimizer], torch.optim.lr_scheduler._LRScheduler
         ],
         discount: float,
-        disable_critic: bool = True,
+        disable_critic: bool = False,
         normalize_advantage: bool = False,
         clip_eps=0.2,
         clip_eps_vf: float = 5.0,
@@ -39,7 +39,7 @@ class PPOTransformer:
         gae_lambda: float = 1.0,
         max_context_len: Optional[int] = None,
         critic_loss_coef: float = 0.5,
-        max_grad_norm=10.0,
+        max_grad_norm=0.5,
     ):
         self.actor_critic: TransformerActorCritic = make_actor_critic(
             observation_shape, action_dim, max_ep_len, action_space
@@ -98,6 +98,7 @@ class PPOTransformer:
                 "actor_loss": [],
                 "actor_clip_fraction": [],
                 "grad_norm": [],
+                "grad_norm_critic": [],
                 "critic_loss": [],
                 "critic_clip_fraction": [],
             }
@@ -109,10 +110,10 @@ class PPOTransformer:
             }
 
         #TODO remove it just fortest
-        rollout_buffer.returns[:len(rollout_buffer)] = self.normalize(
-            rollout_buffer.returns[:len(rollout_buffer)],
-            self.eps
-        )
+        # rollout_buffer.returns[:len(rollout_buffer)] = self.normalize(
+        #     rollout_buffer.returns[:len(rollout_buffer)],
+        #     self.eps
+        # )
 
         # foreach iterator in train epoch
         for itr in range(self.train_epoach):
@@ -144,8 +145,14 @@ class PPOTransformer:
 
             # clip record gradnorm
             if not self.disable_critic:
+                normed_parameters = list(self.actor_critic.encoder.parameters()) + \
+                    list(self.actor_critic.actor_head.parameters())
                 grad_norm = torch.nn.utils.clip_grad.clip_grad_norm_(
-                    self.actor_critic.parameters(), self.max_grad_norm
+                    normed_parameters, self.max_grad_norm
+                )
+
+                grad_norm_critic = torch.nn.utils.clip_grad.clip_grad_norm_(
+                    self.actor_critic.critic_head.parameters(), 10.0
                 )
             else:
                 normed_parameters = list(self.actor_critic.encoder.parameters()) + \
@@ -172,6 +179,7 @@ class PPOTransformer:
                     (torch.abs(diff) > self.clip_eps_vf).float()
                 ).item()
                 infos["critic_clip_fraction"].append(critic_clip_fraction)
+                infos['grad_norm_critic'].append(grad_norm_critic.item())
 
         # when train finish, update preprocessor
         self.state_processor.fit(rollout_buffer.observations[:len(rollout_buffer)])
@@ -218,8 +226,8 @@ class PPOTransformer:
         else:
             advantage = batch["returns"].reshape((bsize,))
 
-        # if self.normalize_advantage:
-        #     advantage = self.normalize(advantage, eps=self.eps)
+        if self.normalize_advantage:
+            advantage = self.normalize(advantage, eps=self.eps)
 
         # actor loss: -min(ratio * advantage, clip(ratio) * advantage)
         actor_gain = torch.min(
@@ -328,10 +336,12 @@ class RolloutBuffer:
         ob = self.state_processor.transform(ob)
         self.observations[0][:] = ob
 
+        features_prev = None # Debug
         while True:
             # once at here, observation is known, but other component
             # like action is set to 0.0
             self.length += 1  # length set to 0 at reset
+            self.timesteps[steps] = self.length - 1
 
             # update running mean and std
             # self.run_mean[:] = self.run_mean * (1.0 - self.mom)
@@ -356,6 +366,8 @@ class RolloutBuffer:
                 assert len(value.shape) == 0
                 assert len(log_prob.shape) == 0, f"log_prob.shape = {log_prob.shape}"
 
+                features_prev = features
+
             # take that action and get reward and next ob
             next_ob, reward, terminated, truncated, info = env.step(action)
 
@@ -363,7 +375,6 @@ class RolloutBuffer:
             rollout_done = terminated or truncated or (steps + 1) >= self.max_ep_len
 
             # record result of taking that action
-            self.timesteps[steps] = steps
             self.actions[steps][:] = action
             self.rewards[steps] = reward
             self.dones[steps] = terminated

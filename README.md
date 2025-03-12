@@ -3,6 +3,7 @@ This repository contains a list of reinforcement learning algorithms. Supported 
 - DDPG
 - REINFORCE
 - PPO
+- PPO with Transformer as both actor and critic
 - CrossQ
 - Decision Transformer
 
@@ -10,8 +11,10 @@ This repository contains a list of reinforcement learning algorithms. Supported 
 Evaluation rewards on halfcheetah task:
 1. Algorithms explore the environment directly (DDPG, PPO, CrossQ)
 ![Evaluation Reward](figures/results.png)
-2. Behavior clone methods trained using `mujoco/halfcheetah/medium-v0` dataset
+2. Decision Transfrormer trained by `mujoco/halfcheetah/medium-v0` dataset
 ![Evaluation Reward](figures/dt_result.png)
+3. PPO with Transformer 
+![Evaluation Reward](figures/ppotf.png)
 
 ## Install The Package
 Follow these steps to set up the environment
