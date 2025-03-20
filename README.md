@@ -6,6 +6,7 @@ This repository contains a list of reinforcement learning algorithms. Supported 
 - PPO with Transformer as both actor and critic
 - CrossQ
 - Decision Transformer
+- QLearning with Diffusion Policy
 
 ## Experimental Results
 Evaluation rewards on halfcheetah task:
@@ -15,6 +16,8 @@ Evaluation rewards on halfcheetah task:
 ![Evaluation Reward](figures/dt_result.png)
 3. PPO with Transformer 
 ![Evaluation Reward](figures/ppotf.png)
+4. Q-Learning with diffusion policy trained by `mujoco/halfcheetah/medium-v0` dataset
+![Evaluation Reward](figures/ql_diffuse_result.png)
 
 ## Install The Package
 Follow these steps to set up the environment
