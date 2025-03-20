@@ -4,9 +4,10 @@ from torch import nn
 import numpy as np
 import math
 
+
 class Diffusion(nn.Module):
     def __init__(self, state_dim, action_dim, model: nn.Module, n_timesteps=100):
-        """ This class implement a diffusion model using DDPM
+        """This class implement a diffusion model using DDPM
         paper link: https://arxiv.org/pdf/2006.11239
 
         Args:
@@ -36,32 +37,40 @@ class Diffusion(nn.Module):
         # variance of p(x(t-1) | x(t), x(0))
         # formula: beta(t) (1 - alpha_bar(t-1)) / (1 - alpha_bar(t))
         posterior_var = betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
-        
+
         # coef when combine post mean
         # c0 = sqrt(alphacum(t-1)) beta(t) / (1 - alphacum(t))
         # c1 = sqrt(1-beta(t)) (1-alphacum(t-1)) / (1 - alphacum(t))
         post_c0 = torch.sqrt(alphas_cumprod_prev) * betas / (1.0 - alphas_cumprod)
-        post_c1 = torch.sqrt(1.0 - betas) * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
+        post_c1 = (
+            torch.sqrt(1.0 - betas)
+            * (1.0 - alphas_cumprod_prev)
+            / (1.0 - alphas_cumprod)
+        )
 
         # register buffers
-        self.register_buffer('betas', betas)
-        self.register_buffer('alphas', alphas)
-        self.register_buffer('alphas_cumprod', alphas_cumprod)
-        self.register_buffer('alphas_cumprod_prev', alphas_cumprod_prev)
-        self.register_buffer('sqrt_alphas_cumprod', sqrt_alphas_cumprod)
-        self.register_buffer('sqrt_one_minus_alphas_cumprod', sqrt_one_minus_alphas_cumprod)
-        self.register_buffer('log_one_minus_alphas_cumprod', log_one_minus_alphas_cumprod)
-        self.register_buffer('sqrt_recip_alphas_cumprod', sqrt_recip_alphas_cumprod)
-        self.register_buffer('sqrt_recipm1_alphas_cumprod', sqrt_recipm1_alphas_cumprod)
-        self.register_buffer('posterior_var', posterior_var)
-        self.register_buffer('post_c0', post_c0)
-        self.register_buffer('post_c1', post_c1)
+        self.register_buffer("betas", betas)
+        self.register_buffer("alphas", alphas)
+        self.register_buffer("alphas_cumprod", alphas_cumprod)
+        self.register_buffer("alphas_cumprod_prev", alphas_cumprod_prev)
+        self.register_buffer("sqrt_alphas_cumprod", sqrt_alphas_cumprod)
+        self.register_buffer(
+            "sqrt_one_minus_alphas_cumprod", sqrt_one_minus_alphas_cumprod
+        )
+        self.register_buffer(
+            "log_one_minus_alphas_cumprod", log_one_minus_alphas_cumprod
+        )
+        self.register_buffer("sqrt_recip_alphas_cumprod", sqrt_recip_alphas_cumprod)
+        self.register_buffer("sqrt_recipm1_alphas_cumprod", sqrt_recipm1_alphas_cumprod)
+        self.register_buffer("posterior_var", posterior_var)
+        self.register_buffer("post_c0", post_c0)
+        self.register_buffer("post_c1", post_c1)
 
     # x_start is actually x(-1)
     def filter_xstart(self, x_t, t, noise):
         """E[x0 | x_t]
         E[x0 | x_t] = 1.0 / sqrt(alphacum(t)) * (
-            x(t) - sqrt(1-alphacum(t))*noise 
+            x(t) - sqrt(1-alphacum(t))*noise
         )
 
         Args:
@@ -79,8 +88,10 @@ class Diffusion(nn.Module):
         x_start = (x_t - sqrt_1m_alphas * noise) * recip_sqrt_alpha
 
         return x_start
-    
-    def q_post_mean_and_var(self, x_t: torch.Tensor, t: torch.Tensor, x_start: torch.Tensor):
+
+    def q_post_mean_and_var(
+        self, x_t: torch.Tensor, t: torch.Tensor, x_start: torch.Tensor
+    ):
         """compute mean and var of q(x(t-1) | x(t), x(0))
 
         Args:
@@ -89,7 +100,7 @@ class Diffusion(nn.Module):
             x_start (torch.Tensor): size [bsize, action_dim]
         """
         (c0, c1) = (get_time_value(t, self.post_c0), get_time_value(t, self.post_c1))
-        var = get_time_value(t, self.posterior_var) # shape [bsize, 1]
+        var = get_time_value(t, self.posterior_var)  # shape [bsize, 1]
         mu = c0 * x_start + c1 * x_t
 
         bsize = len(x_t)
@@ -97,7 +108,7 @@ class Diffusion(nn.Module):
         assert mu.shape == (bsize, self.action_dim)
 
         return mu, var
-    
+
     def reverse_sample(self, x_t: torch.Tensor, t: torch.Tensor, states: torch.Tensor):
         """given denoise x(t) and sample x(t-1)
 
@@ -112,13 +123,13 @@ class Diffusion(nn.Module):
         mu, var = self.q_post_mean_and_var(x_t, t, x_start_hat)
 
         # sample a random noise matrix
-        z = torch.randn_like(x_t) #[bsize, action_dim]
+        z = torch.randn_like(x_t)  # [bsize, action_dim]
         mask = (t > 0).float()
-        mask = mask[:,None]
+        mask = mask[:, None]
 
         return mu + (mask * torch.sqrt(var)) * z
-    
-    def sample_action(self, states: torch.Tensor):
+
+    def sample_action(self, states: torch.Tensor) -> torch.Tensor:
         """use diffusion to sample action for the given states
 
         Args:
@@ -132,15 +143,17 @@ class Diffusion(nn.Module):
         # init x(T) by random noise
         x = torch.randn(bsize, self.action_dim, device=states.device)
 
-        for t in range(self.n_timesteps-1, -1, -1):
+        for t in range(self.n_timesteps - 1, -1, -1):
             times = torch.zeros(bsize, dtype=torch.long, device=states.device)
             times[:] = t
             x = self.reverse_sample(x, times, states)
 
         # the denoised output is actually x(-1)
         return x
-    
-    def qforward_sample(self, x_start: torch.Tensor, t: torch.Tensor, noise: torch.Tensor):
+
+    def qforward_sample(
+        self, x_start: torch.Tensor, t: torch.Tensor, noise: torch.Tensor
+    ):
         """sampling from q(x(t) | x_start) with t >= 0
         q(x(t) | x(-1)) = N(x(t) | sqrt(alpha_cum(t)) x_start, (1-alphacum(t))I )
 
@@ -156,9 +169,9 @@ class Diffusion(nn.Module):
         sqrt_1m_alpha = get_time_value(t, self.sqrt_one_minus_alphas_cumprod)
 
         return sqrt_alpha * x_start + sqrt_1m_alpha * noise
-    
+
     def compute_loss(self, states: torch.Tensor, actions: torch.Tensor):
-        """compute diffusion loss 
+        """compute diffusion loss
 
         Args:
             states (torch.Tensor): [bsize, state_dim]
@@ -169,14 +182,16 @@ class Diffusion(nn.Module):
         """
         bsize = len(states)
         device = states.device
-        
+
         # sampling time slices
-        times = torch.randint(0, self.n_timesteps, size=(bsize,), dtype=torch.long, device=device)
+        times = torch.randint(
+            0, self.n_timesteps, size=(bsize,), dtype=torch.long, device=device
+        )
 
         # sampling noise
         noise = torch.randn(bsize, self.action_dim, device=device)
 
-        # compute corrupted action
+        # compute corrupted action (no state used)
         with torch.no_grad():
             x_t = self.qforward_sample(actions, times, noise)
 
@@ -188,6 +203,7 @@ class Diffusion(nn.Module):
 
         return loss
 
+
 def get_time_value(t, x):
     return x[t].unsqueeze(dim=1)
 
@@ -196,6 +212,7 @@ class SinusoidalPosEmb(nn.Module):
     def __init__(self, dim):
         super().__init__()
         self.dim = dim
+        assert (self.dim % 2 == 0)
 
     def forward(self, x):
         device = x.device
@@ -205,19 +222,15 @@ class SinusoidalPosEmb(nn.Module):
         emb = x[:, None] * emb[None, :]
         emb = torch.cat((emb.sin(), emb.cos()), dim=-1)
         return emb
-    
+
+
 class NoiseMLP(nn.Module):
     """
     MLP Model
     """
-    def __init__(self,
-                 state_dim,
-                 action_dim,
-                 device,
-                 t_dim=16):
 
+    def __init__(self, state_dim, action_dim, t_dim=16):
         super().__init__()
-        self.device = device
 
         self.time_mlp = nn.Sequential(
             SinusoidalPosEmb(t_dim),
@@ -227,30 +240,34 @@ class NoiseMLP(nn.Module):
         )
 
         input_dim = state_dim + action_dim + t_dim
-        self.mid_layer = nn.Sequential(nn.Linear(input_dim, 256),
-                                       nn.Mish(),
-                                       nn.Linear(256, 256),
-                                       nn.Mish(),
-                                       nn.Linear(256, 256),
-                                       nn.Mish())
+        self.mid_layer = nn.Sequential(
+            nn.Linear(input_dim, 256),
+            nn.Mish(),
+            nn.Linear(256, 256),
+            nn.Mish(),
+            nn.Linear(256, 256),
+            nn.Mish(),
+        )
 
         self.final_layer = nn.Linear(256, action_dim)
 
     def forward(self, x, time, state):
         if len(time.shape) > 1:
-            time = time.squeeze(1)  # added for shaping t from (batch_size, 1) to (batch_size,)
+            time = time.squeeze(
+                1
+            )  # added for shaping t from (batch_size, 1) to (batch_size,)
         t = self.time_mlp(time)
         x = torch.cat([x, t, state], dim=1)
         x = self.mid_layer(x)
 
         return self.final_layer(x)
-    
+
 
 def vp_beta_schedule(timesteps, dtype=torch.float32):
     t = np.arange(1, timesteps + 1)
     T = timesteps
-    b_max = 10.
+    b_max = 10.0
     b_min = 0.1
-    alpha = np.exp(-b_min / T - 0.5 * (b_max - b_min) * (2 * t - 1) / T ** 2)
+    alpha = np.exp(-b_min / T - 0.5 * (b_max - b_min) * (2 * t - 1) / T**2)
     betas = 1 - alpha
     return torch.tensor(betas, dtype=dtype)

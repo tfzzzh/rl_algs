@@ -4,13 +4,31 @@ from typing import List
 import torch
 from torch.utils.data import DataLoader
 
+from rl_algs.utility.replay_buffer import ReplayBuffer
+
 
 class DataHandler:
     def __init__(self, dataset_name: str, download=True):
+        # TODO: note that episode_data.observations's length = episode_length + 1 
         self.dataset = minari.load_dataset(dataset_name, download=download)
         self.dataset_env = self.dataset.recover_environment()
         # self.env_name = self.env.unwrapped.spec.id
         self._info = None
+
+    def create_replaybuffer(self, capacity=1100000):
+        rbuffer = ReplayBuffer(capacity=capacity)
+        for episode_data in self.dataset.iterate_episodes():
+            eplen = len(episode_data.rewards)
+            for i in range(eplen):
+                rbuffer.insert(
+                    observation=episode_data.observations[i],
+                    action=episode_data.actions[i],
+                    reward=episode_data.rewards[i],
+                    next_observation=episode_data.observations[i+1],
+                    done=episode_data.terminations[i]
+                )
+        
+        return rbuffer
 
     def create_dataloader(self, 
         batch_size: int, shuffle: bool, device: torch.device, max_length: int,
