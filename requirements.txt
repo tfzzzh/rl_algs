@@ -7,3 +7,4 @@ tqdm>=4.67.1
 pyyaml>=6.0.2
 gymnasium[mujoco]>=1.0.0
 minari[all]>=0.5.2
+ale-py==0.10.2

@@ -15,6 +15,8 @@ def sample_trajectory(
     env: gym.Env, policy: MLPPolicy, max_length: int, render: bool = False
 ) -> Dict[str, np.ndarray]:
     """Sample a rollout in the environment from a policy."""
+    assert max_length is not None
+
     ob, init_info = env.reset()
     obs, acs, rewards, next_obs, terminals, image_obs = [], [], [], [], [], []
     steps = 0
@@ -158,3 +160,27 @@ def convert_listofrollouts(trajs):
 
 def get_traj_length(traj):
     return len(traj["reward"])
+
+
+def evaluate_performance(env, agent, num_eval_trajectories, max_ep_len):
+    trajectories = sample_n_trajectories(
+        env,
+        policy=agent,
+        ntraj=num_eval_trajectories,
+        max_length=max_ep_len,
+    )
+    returns = [t["episode_statistics"]["r"] for t in trajectories]
+    ep_lens = [t["episode_statistics"]["l"] for t in trajectories]
+
+    infos = {
+        'eval_return': np.mean(returns),
+        'eval_ep_len': np.mean(ep_lens),
+        "eval/return_std": np.std(returns),
+        "eval/return_max": np.max(returns),
+        "eval/return_min": np.min(returns),
+        "eval/ep_len_std": np.std(ep_lens),
+        "eval/ep_len_max": np.max(ep_lens),
+        "eval/ep_len_min": np.min(ep_lens)
+    }
+
+    return infos
