@@ -17,12 +17,16 @@ def atari_discrete_reinforce_config(
     hidden_size: int = 128,
     num_layers: int = 3,
     # action_embed_dim: int = 512,
-    actor_learning_rate: float = 3e-4,
-    critic_learning_rate: float = 3e-4,
-    temp_learming_rate: float = 2.5e-4,
+    actor_learning_rate: float = 0.5e-4,
+    critic_learning_rate: float = 1.5e-4,
+    temp_learming_rate: float = 0.5e-4,
     total_steps: int = 300000,
     random_steps: int = 10000,
-    eps_annealing_frames: int = 10000,
+    # action getter
+    explore_eps_annealing_frames: int = 10000,
+    explore_eps_initial: float = 1.0,
+    explore_eps_final: float=0.01,
+    explore_eps_final_frame: float=0.01,
     batch_size: int = 128,
     replay_buffer_capacity: int = 1000000,
     ep_len: Optional[int] = None,
@@ -41,12 +45,13 @@ def atari_discrete_reinforce_config(
     use_entropy_bonus: bool = True,
     temperature: float = 0.1,
     log_temperature:float = 0.0,
+    pretrained_model_path: Optional[str] = None,
 ):
     def make_actor(num_action: int) -> nn.Module:
         return DiscreteActor(num_action)
 
     def make_actor_optimizer(params: torch.nn.ParameterList) -> torch.optim.Optimizer:
-        return torch.optim.Adam(params, lr=actor_learning_rate)
+        return torch.optim.Adam(params, lr=actor_learning_rate, eps=1e-4)
 
     def make_actor_schedule(
         optimizer: torch.optim.Optimizer,
@@ -60,7 +65,7 @@ def atari_discrete_reinforce_config(
         return DiscreteCritic(num_action, num_layers, hidden_size)
 
     def make_critic_optimizer(params: torch.nn.ParameterList) -> torch.optim.Optimizer:
-        return torch.optim.Adam(params, lr=temp_learming_rate)
+        return torch.optim.Adam(params, lr=temp_learming_rate, eps=1e-4)
 
     def make_critic_schedule(
         optimizer: torch.optim.Optimizer,
@@ -71,7 +76,7 @@ def atari_discrete_reinforce_config(
         return Temperature(log_temperature)
     
     def make_temperature_optimizer(params: torch.nn.ParameterList) -> torch.optim.Optimizer:
-        return torch.optim.Adam(params, lr=critic_learning_rate)
+        return torch.optim.Adam(params, lr=critic_learning_rate, eps=1e-4)
 
     def make_env(render: bool = False) -> gym.Env:
         env = make_atari(env_name, render_mode="human" if render else None)
@@ -80,11 +85,11 @@ def atari_discrete_reinforce_config(
     def make_action_getter(num_action: int) -> ActionGetter:
         return ActionGetter(
             n_actions=num_action,
-            eps_initial=1.0,
-            eps_final=0.01,
-            eps_final_frame=0.01,
+            eps_initial=explore_eps_initial,
+            eps_final=explore_eps_final,
+            eps_final_frame=explore_eps_final_frame,
             eps_evaluation=0.0,
-            eps_annealing_frames=eps_annealing_frames,
+            eps_annealing_frames=explore_eps_annealing_frames,
             replay_memory_start_size=random_steps,
             max_steps=total_steps
         )
@@ -137,4 +142,5 @@ def atari_discrete_reinforce_config(
         "ep_len": ep_len,
         "batch_size": batch_size,
         "make_env": make_env,
+        "pretrained_model_path": pretrained_model_path
     }

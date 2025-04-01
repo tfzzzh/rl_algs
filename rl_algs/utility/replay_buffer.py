@@ -13,7 +13,8 @@ class ReplayBuffer:
         self.dones = None
 
     def sample(self, batch_size):
-        rand_indices = np.random.randint(0, self.size, size=(batch_size,)) % self.max_size
+        effective_size = min(self.size, self.max_size)
+        rand_indices = np.random.randint(0, effective_size, size=(batch_size,))
         return {
             "observations": self.observations[rand_indices],
             "actions": self.actions[rand_indices],

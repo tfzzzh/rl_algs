@@ -163,12 +163,17 @@ def get_traj_length(traj):
 
 
 def evaluate_performance(env, agent, num_eval_trajectories, max_ep_len):
-    trajectories = sample_n_trajectories(
-        env,
-        policy=agent,
-        ntraj=num_eval_trajectories,
-        max_length=max_ep_len,
-    )
+    # trajectories = sample_n_trajectories(
+    #     env,
+    #     policy=agent,
+    #     ntraj=num_eval_trajectories,
+    #     max_length=max_ep_len,
+    # )
+    trajectories = []
+    for i in range(num_eval_trajectories):
+        traj = sample_trajectory_only_reward(env, policy=agent, max_length=max_ep_len)
+        trajectories.append(traj)
+
     returns = [t["episode_statistics"]["r"] for t in trajectories]
     ep_lens = [t["episode_statistics"]["l"] for t in trajectories]
 
@@ -184,3 +189,43 @@ def evaluate_performance(env, agent, num_eval_trajectories, max_ep_len):
     }
 
     return infos
+
+
+def sample_trajectory_only_reward(
+    env: gym.Env, policy: MLPPolicy, max_length: int
+) -> Dict[str, np.ndarray]:
+    """Sample a rollout in the environment from a policy."""
+    assert max_length is not None
+
+    ob, init_info = env.reset()
+    rewards = []
+    steps = 0
+
+    while True:
+        ac = policy.get_action(ob)
+
+        next_ob, rew, terminated, truncated, info = env.step(ac)
+        done = terminated or truncated
+
+        steps += 1
+        rollout_done = done or steps > max_length  # HINT: this is either 0 or 1
+
+        # record result of taking that action
+        rewards.append(rew)
+
+        ob = next_ob  # jump to next timestep
+
+        # end the rollout if the rollout ended
+        if rollout_done:
+            break
+
+    episode_statistics = {"l": steps, "r": np.sum(rewards)}
+    if "episode" in info:
+        episode_statistics.update(info["episode"])
+
+    # env.close() (env reused no need to close)
+
+    return {
+        "reward": np.array(rewards, dtype=np.float32),
+        "episode_statistics": episode_statistics,
+    }

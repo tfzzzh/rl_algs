@@ -166,7 +166,6 @@ class CNNEncoder(nn.Module):
             nn.ReLU(),
             nn.Flatten(),
             nn.Linear(3136, 512),  # 3136 hard-coded based on img size + CNN layers
-            nn.ReLU()
         )
         self.net = net
 

@@ -3,9 +3,12 @@ env_name: ALE/Breakout-v5
 exp_name: atari
 
 discount: 0.99
-total_steps: 1000000
-random_steps: 50000
+total_steps: 5000000
+random_steps: 10000
 explore_eps_annealing_frames: 10000
+explore_eps_initial: 0.5
+explore_eps_final: 0.01
+explore_eps_final_frame: 0.01
 
 use_soft_target_update: True
 soft_target_update_rate: 0.005
@@ -23,4 +26,6 @@ replay_buffer_capacity: 430000
 
 actor_learning_rate: 1.0e-4
 critic_learning_rate: 2.0e-4
-temp_learming_rate: 0.5e-4
+temp_learming_rate: 1.0e-6
+
+pretrained_model_path: ./data/atari_0330atari_ALE/Breakout-v5_ch128_cl2_alr0.0001_clr0.0002_b64_d0.99_btmin_target_t0.1_stu0.005_31-03-2025_18-17-56/checkpoints/step=4999999.cpt

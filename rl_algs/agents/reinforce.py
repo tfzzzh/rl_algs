@@ -97,6 +97,12 @@ class AtariDiscreteReinforce:
         self.temp_lr_scheduler = make_temperature_lr_schedule(self.temp_optimizer)
 
         self.update_target_critic()
+        self.stop_target_critics_gradient()
+
+    def stop_target_critics_gradient(self):
+        # freeze parameter gradient for target net
+        for p in self.target_critics.parameters():
+            p.requires_grad = False
 
     def get_action(self, observation: np.ndarray) -> np.int64:
         """
@@ -123,49 +129,6 @@ class AtariDiscreteReinforce:
         """
         return torch.stack([critic(obs) for critic in self.target_critics], dim=0)
 
-    # def update_critic(
-    #     self,
-    #     obs: torch.Tensor,
-    #     action: torch.Tensor,
-    #     reward: torch.Tensor,
-    #     next_obs: torch.Tensor,
-    #     done: torch.Tensor,
-    # ):
-    #     """
-    #     Update the critic networks by computing target values and minimizing Bellman error.
-    #     """
-    #     (batch_size,) = reward.shape
-
-    #     # Compute target values
-    #     # Important: we don't need gradients for target values!
-    #     # compute Q(s', a') with a' ~ pi(s')
-    #     target_values = self.generate_q_targets(reward, next_obs, done, batch_size)
-
-    #     # Update the critic
-    #     # Predict Q-values
-    #     q_values, q_a = self.extract_action_q_values(obs, action, batch_size)
-
-    #     assert q_a.shape == (self.num_critic_networks, batch_size), q_a.shape
-
-    #     # debug code------------------start
-    #     print(
-    #         f"qvalues: {q_values.min(dim=0).values.mean(dim=0).cpu().detach().numpy()}"
-    #     )
-    #     print(f"adists : {self.actor(obs).probs.mean(dim=0).cpu().detach().numpy()}")
-    #     # debug code -----------------------end
-
-    #     # Compute loss
-    #     loss: torch.Tensor = self.critic_loss(q_a, target_values)
-
-    #     grad_norm = self.apply_optimizer(loss, self.critics.parameters(), self.critics_optimizer, self.critics_lr_scheduler)
-
-    #     return {
-    #         "critic_loss": loss.item(),
-    #         "q_values": q_a.mean().item(),
-    #         "target_values": target_values.mean().item(),
-    #         "critic_grad_norm": grad_norm.item(),
-    #         "critic_lr": self.critic_lr_scheduler.get_last_lr()[0],
-    #     }
 
     def extract_action_q_values(self, q_values, action, batch_size):
         # we need q_values[x, y, actions[y]]
@@ -212,34 +175,6 @@ class AtariDiscreteReinforce:
         lr_scheduler.step()
         return grad_norm
 
-    # def actor_loss(self, obs: torch.Tensor):
-    #     """compute actor's loss with entropy
-
-    #     Args:
-    #         obs (torch.Tensor): size [bsize, *obs_shape]
-
-    #     Returns:
-    #         actor_loss = E_{pi} [Q(s',a')]
-    #     """
-    #     batch_size = obs.shape[0]
-    #     assert obs.shape[1:] == self.observation_shape
-
-    #     # Generate an action distribution
-    #     action_distribution: torch.distributions.Categorical = self.actor(obs)
-
-    #     with torch.no_grad():
-    #         # compute Q(s, a)
-    #         q_values = self.critic(obs)
-    #         q_values = torch.min(q_values, dim=0).values  # [bsize, num_action]
-
-    #     # Do REINFORCE: calculate log-probs and use the Q-values
-    #     expect_q = (q_values * action_distribution.probs).sum(dim=1)
-    #     assert expect_q.shape == (batch_size,)
-
-    #     loss = -torch.mean(expect_q)
-
-    #     return loss, torch.mean(action_distribution.entropy())
-
     def compute_actor_loss(
         self,
         action_distribution: torch.distributions.Categorical,
@@ -260,6 +195,9 @@ class AtariDiscreteReinforce:
         # compute q_values in stop gradient way
         q_values = torch.min(q_values.detach(), dim=0).values  # [bsize, num_action]
 
+        # normalize q_values
+        q_values = (q_values - q_values.mean()) / (q_values.std() + 1e-4)
+
         # Do REINFORCE: calculate log-probs and use the Q-values
         expect_q = (q_values * action_distribution.probs).sum(dim=1)
         assert expect_q.shape == (batch_size,)
@@ -267,50 +205,6 @@ class AtariDiscreteReinforce:
         loss = -torch.mean(expect_q)
 
         return loss, torch.mean(action_entropy)
-
-    # def update_actor(self, obs: torch.Tensor):
-    #     """
-    #     Update the actor by one gradient step using either REPARAMETRIZE or REINFORCE.
-    #     """
-    #     loss, entropy = self.actor_loss(obs)
-
-    #     # Add entropy if necessary
-    #     if self.use_entropy_bonus:
-    #         temperature = self.temp_net().detach()
-    #         loss -= temperature * entropy
-
-    #     self.actor_optimizer.zero_grad()
-    #     loss.backward()
-    #     grad_norm = nn.utils.clip_grad_norm_(
-    #         self.actor.parameters(), self.clip_grad_norm
-    #     )
-    #     self.actor_optimizer.step()
-    #     self.actor_lr_scheduler.step()
-
-    #     return {
-    #         "actor_loss": loss.item(),
-    #         "entropy": entropy.item(),
-    #         "actor_lr": self.actor_lr_scheduler.get_last_lr()[0],
-    #         "actor_grad_norm": grad_norm.item(),
-    #     }
-
-    # def update_temperature(self, obs):
-    #     action_dist: torch.distributions.Categorical = self.actor(obs)
-    #     entropy = action_dist.entropy()
-    #     target_entropy = self.temp_net.get_target_entropy(self.num_action, self.target_entropy_ratio)
-    #     loss = self.temp_net.get_loss(entropy.detach(), target_entropy)
-
-    #     loss.backward()
-    #     grad_norm = nn.utils.clip_grad_norm_(
-    #         self.temp_net.parameters(), self.clip_grad_norm
-    #     )
-    #     self.temp_optimizer.step()
-    #     self.temp_lr_scheduler.step()
-
-    #     return {
-    #         "temp_loss": loss.item(),
-    #         "temperature": self.temp_net.forward().item()
-    #     }
 
     def update_target_critic(self):
         self.soft_update_target_critic(1.0)
@@ -320,60 +214,6 @@ class AtariDiscreteReinforce:
             self.target_critics.parameters(), self.critics.parameters()
         ):
             target_param.data.copy_(target_param.data * (1.0 - tau) + param.data * tau)
-
-    # def update(
-    #     self,
-    #     observations: torch.Tensor,
-    #     actions: torch.Tensor,
-    #     rewards: torch.Tensor,
-    #     next_observations: torch.Tensor,
-    #     dones: torch.Tensor,
-    #     step: int,
-    # ):
-    #     """
-    #     Update the actor and critic networks.
-    #     """
-
-    #     critic_infos = []
-    #     # update the critic for num_critic_upates steps, and add the output stats to critic_infos
-    #     for _ in range(self.num_critic_updates):
-    #         critic_infos.append(
-    #             self.update_critic(
-    #                 observations, actions, rewards, next_observations, dones
-    #             )
-    #         )
-
-    #     # Update the actor
-    #     actor_info = self.update_actor(observations)
-
-    #     # update temperature
-    #     temp_info = self.update_temperature(observations)
-
-    #     # Perform either hard or soft target updates.
-    #     # Relevant variables:
-    #     #  - step
-    #     #  - self.target_update_period (None when using soft updates)
-    #     #  - self.soft_target_update_rate (None when using hard updates)
-    #     # perform hard update when target_update_period is not none
-    #     if self.target_update_period is not None:
-    #         if (step + 1) % self.target_update_period == 0:
-    #             self.update_target_critic()
-
-    #     # perform soft update when soft_target_update_rate is not none
-    #     if self.soft_target_update_rate is not None:
-    #         assert (
-    #             self.soft_target_update_rate >= 0.0
-    #             and self.soft_target_update_rate <= 1.0
-    #         )
-    #         self.soft_update_target_critic(self.soft_target_update_rate)
-
-    #     # Average the critic info over all of the steps
-    #     critic_info = {
-    #         k: np.mean([info[k] for info in critic_infos]) for k in critic_infos[0]
-    #     }
-
-    #     # Deal with LR scheduling
-    #     return {**actor_info, **critic_info, **temp_info}
 
     def update(
         self,
@@ -404,6 +244,8 @@ class AtariDiscreteReinforce:
         qtarget_values = self.generate_q_targets(
             rewards, next_observations, dones, batch_size
         )
+        assert qtarget_values.requires_grad == False
+
         q_a = self.extract_action_q_values(q_values, actions, batch_size)
         qloss: torch.Tensor = self.critic_loss(q_a, qtarget_values)
 
@@ -468,17 +310,20 @@ class AtariDiscreteReinforce:
             "actor_state_dict": self.actor.state_dict(),
             "critics_state_dict": self.critics.state_dict(),
             "target_critics_state_dict": self.target_critics.state_dict(),
+            "temp_net_state_dict": self.temp_net.state_dict(),
             # optimizer ckp
             "actor_optimizer_state_dict": self.actor_optimizer.state_dict(),
             "critics_optimizer_state_dict": self.critics_optimizer.state_dict(),
+            "temp_optimizer_state_dict": self.temp_optimizer.state_dict(),
             "actor_lr_scheduler_state_dict": self.actor_lr_scheduler.state_dict(),
             "critics_lr_scheduler_state_dict": self.critics_lr_scheduler.state_dict(),
+            "temp_lr_scheduler_state_dict": self.temp_lr_scheduler.state_dict(),
         }
 
         torch.save(checkpoint, path)
         print(f"save model to checkpoint: {path}")
 
-    def load_from_checkpoint(self, path, load_optimizer=False):
+    def load_from_checkpoint(self, path, load_target_critic=True, load_optimizer=False):
         """
         load model and optimizer state from disk,
         """
@@ -486,17 +331,32 @@ class AtariDiscreteReinforce:
 
         self.actor.load_state_dict(checkpoint["actor_state_dict"])
         self.critics.load_state_dict(checkpoint["critics_state_dict"])
-        self.target_critics.load_state_dict(checkpoint["target_critics_state_dict"])
+        self.temp_net.load_state_dict(checkpoint['temp_net_state_dict'])
+
+        if load_target_critic:
+            self.target_critics.load_state_dict(checkpoint["target_critics_state_dict"])
+        else:
+            print("set target critic to the same value as critic")
+            self.target_critics.load_state_dict(checkpoint['critics_state_dict'])
+
+        self.stop_target_critics_gradient()
 
         if load_optimizer:
+            print("load optimizer's states")
             self.actor_optimizer.load_state_dict(
                 checkpoint["actor_optimizer_state_dict"]
             )
             self.critics_optimizer.load_state_dict(
                 checkpoint["critics_optimizer_state_dict"]
             )
+            self.temp_optimizer.load_state_dict(
+                checkpoint['temp_optimizer_state_dict']
+            )
             self.actor_lr_scheduler.load_state_dict(
                 checkpoint["actor_lr_scheduler_state_dict"]
+            )
+            self.temp_lr_scheduler.load_state_dict(
+                checkpoint['temp_lr_scheduler_state_dict']
             )
             self.critics_lr_scheduler.load_state_dict(
                 checkpoint["critics_lr_scheduler_state_dict"]

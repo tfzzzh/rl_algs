@@ -36,6 +36,11 @@ def run_training_loop(config: dict, logger: Logger, args: argparse.Namespace):
         num_action=num_action, **config["agent_kwargs"]
     )
 
+    # load checkpoint if avaiable
+    if config['pretrained_model_path'] is not None:
+        print(f"use pretrained model in {config['pretrained_model_path']}")
+        agent.load_from_checkpoint(config['pretrained_model_path'], load_optimizer=False, load_target_critic=False)
+
     # create action explorer
     action_getter = config['make_action_getter'](num_action)
 
@@ -45,8 +50,8 @@ def run_training_loop(config: dict, logger: Logger, args: argparse.Namespace):
     agent.save_checkpoint(os.path.join(checkpoint_dir, f"step=0.cpt"))
 
     # create replay buffer
-    frame_history_len = env.observation_space.shape[0]
-    assert frame_history_len == 4, "only support 4 stacked frames"
+    # frame_history_len = env.observation_space.shape[0]
+    # assert frame_history_len == 4, "only support 4 stacked frames"
     # replay_buffer = MemoryEfficientReplayBuffer(frame_history_len=frame_history_len)
     replay_buffer = ReplayBuffer(capacity=config['replay_buffer_capacity'])
 
@@ -74,7 +79,7 @@ def run_training_loop(config: dict, logger: Logger, args: argparse.Namespace):
         #     next_observation=next_observation[-1],
         #     done=terminated,
         # )
-        replay_buffer.insert(observation, action, clip_reward(reward), next_observation, done)
+        replay_buffer.insert(observation, action, clip_reward(reward), next_observation, terminated)
 
         if done:
             # logger.log_scalar(info["episode"]["r"], "train_return", step)
@@ -105,6 +110,7 @@ def run_training_loop(config: dict, logger: Logger, args: argparse.Namespace):
                 action_sample_dist_dict = {f"action_{a}": action_sample_dist[a] for a in range(num_action)}
                 logger.log_scalars(action_sample_dist_dict, "action", step, "sampled")
                 logger.log_scalar(explore_eps, "explore_eps", step)
+                logger.flush()
 
 
             # run evaluation
@@ -117,6 +123,7 @@ def run_training_loop(config: dict, logger: Logger, args: argparse.Namespace):
                 )
 
                 logger.log_metrics(eval_info, step)
+                logger.flush()
 
             if step % args.ckp_interval == 0 or step == config["total_steps"] - 1:
                 agent.save_checkpoint(os.path.join(checkpoint_dir, f"step={step}.cpt"))
@@ -129,6 +136,40 @@ def clip_reward(reward):
         return 0.0
     else:
         return -1.0
+    
+
+def render_trained_model(config: dict, args: argparse.Namespace):
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    ptu.init_gpu(use_gpu=not args.no_gpu, gpu_id=args.which_gpu)
+
+    # create env
+    env = config["make_env"](render=True)
+    if not isinstance(env.action_space, gym.spaces.Discrete):
+        raise NotImplementedError("only discrete action space is supported")
+
+    # create agent
+    num_action = env.action_space.n
+    agent = AtariDiscreteReinforce(
+        num_action=num_action, **config["agent_kwargs"]
+    )
+
+    # load checkpoint if avaiable
+    if config['pretrained_model_path'] is None:
+        raise Exception("path of pretrained_model_path not set in config.yaml")
+
+    print(f"use pretrained model in {config['pretrained_model_path']}")
+    agent.load_from_checkpoint(config['pretrained_model_path'], load_optimizer=False, load_target_critic=False)
+
+    observation, _ = env.reset()
+    done = False
+
+    while not done:
+        action = agent.get_action(observation)
+        next_observation, reward, terminated, truncated, info = env.step(action)
+        observation = next_observation
+        done = terminated or truncated
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -144,16 +185,20 @@ def main():
     parser.add_argument("--log_interval", type=int, default=1000)
     parser.add_argument("--ckp_interval", type=int, default=21000)
     parser.add_argument("--update_freq", type=int, default=1)
+    parser.add_argument("--run_without_train", type=bool, default=False)
 
     args = parser.parse_args()
 
     # create directory for logging
-    logdir_prefix = "atari_0329"  # keep for autograder
+    logdir_prefix = "atari_0330"  # keep for autograder
 
     config = make_config(args.config_file)
-    logger = make_logger(logdir_prefix, config)
 
-    run_training_loop(config, logger, args)
+    if args.run_without_train:
+        render_trained_model(config, args)
+    else:
+        logger = make_logger(logdir_prefix, config)
+        run_training_loop(config, logger, args)
 
 
 if __name__ == "__main__":
