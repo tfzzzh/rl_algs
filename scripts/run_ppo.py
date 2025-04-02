@@ -1,4 +1,4 @@
-from rl_algs.agents.ppo import PPO
+from rl_algs.agents.ppo import PPO, RolloutBuffer
 import gymnasium as gym
 import numpy as np
 import torch
@@ -41,22 +41,34 @@ def run_training_loop(config: dict, logger: Logger, args: argparse.Namespace):
     # init agent
     agent = PPO(ob_shape, ac_dim, **config["agent_kwargs"])
 
+    # init rollout buffer
+    rollout_buffer = RolloutBuffer(max_length=ep_len, gamma=config['agent_kwargs']['discount'],
+                                    gae_gamma=config['agent_kwargs']['gae_lambda'], obs_type=np.float32)
+    
     num_step = 0
     itr = 0
     while num_step < total_steps:
         # rollout using current actor
-        trajs, step_batch = utils.sample_trajectories(
-            env, agent, batch_size, ep_len
-        )
-        num_step += step_batch
+        # trajs, step_batch = utils.sample_trajectories(
+        #     env, agent, batch_size, ep_len
+        # )
+        # num_step += step_batch
+        num_step += rollout_buffer.rollout(agent, env, batch_size)
 
         # update agent and bookmark infos
-        trajs_dict = {k: [traj[k] for traj in trajs] for k in trajs[0]}
+        # trajs_dict = {k: [traj[k] for traj in trajs] for k in trajs[0]}
+        # train_info = agent.update(
+        #     obs=trajs_dict["observation"],
+        #     actions=trajs_dict["action"],
+        #     rewards=trajs_dict["reward"],
+        #     terminals=trajs_dict["terminal"],
+        #     step=itr,
+        # )
         train_info = agent.update(
-            obs=trajs_dict["observation"],
-            actions=trajs_dict["action"],
-            rewards=trajs_dict["reward"],
-            terminals=trajs_dict["terminal"],
+            obs=[rollout_buffer.observations],
+            actions=[rollout_buffer.actions],
+            rewards=[rollout_buffer.rewards],
+            terminals=[rollout_buffer.dones],
             step=itr,
         )
 

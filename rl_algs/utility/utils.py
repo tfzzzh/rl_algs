@@ -64,7 +64,7 @@ def sample_trajectory(
     if "episode" in info:
         episode_statistics.update(info["episode"])
 
-    env.close()
+    # env.close()
 
     return {
         "observation": np.array(obs, dtype=np.float32),
