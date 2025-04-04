@@ -21,7 +21,6 @@ def run_training_loop(config: dict, logger: Logger, args: argparse.Namespace):
     # make the gym environment
     env = config["make_env"]()
     eval_env = config["make_env"]()
-    render_env = config["make_env"](render=True)
     ep_len = config["ep_len"] or env.spec.max_episode_steps
     batch_size = config["batch_size"]
     total_steps = config['total_steps']
@@ -31,12 +30,6 @@ def run_training_loop(config: dict, logger: Logger, args: argparse.Namespace):
 
     ob_shape = env.observation_space.shape
     ac_dim = env.action_space.shape[0]
-
-    # simulation timestep, will be used for video saving
-    if "model" in dir(env):
-        fps = 1 / env.model.opt.timestep
-    else:
-        fps = env.env.metadata["render_fps"]
 
     # init agent
     agent = PPO(ob_shape, ac_dim, **config["agent_kwargs"])
@@ -48,29 +41,8 @@ def run_training_loop(config: dict, logger: Logger, args: argparse.Namespace):
     num_step = 0
     itr = 0
     while num_step < total_steps:
-        # rollout using current actor
-        # trajs, step_batch = utils.sample_trajectories(
-        #     env, agent, batch_size, ep_len
-        # )
-        # num_step += step_batch
         num_step += rollout_buffer.rollout(agent, env, batch_size)
-
-        # update agent and bookmark infos
-        # trajs_dict = {k: [traj[k] for traj in trajs] for k in trajs[0]}
-        # train_info = agent.update(
-        #     obs=trajs_dict["observation"],
-        #     actions=trajs_dict["action"],
-        #     rewards=trajs_dict["reward"],
-        #     terminals=trajs_dict["terminal"],
-        #     step=itr,
-        # )
-        train_info = agent.update(
-            obs=[rollout_buffer.observations],
-            actions=[rollout_buffer.actions],
-            rewards=[rollout_buffer.rewards],
-            terminals=[rollout_buffer.dones],
-            step=itr,
-        )
+        train_info = agent.update_from_rb(rollout_buffer=rollout_buffer)
 
         # write logs
         if itr % args.log_interval == 0:
@@ -81,42 +53,8 @@ def run_training_loop(config: dict, logger: Logger, args: argparse.Namespace):
 
         # perform evaluation
         if itr % args.eval_interval == 0:
-            trajectories = utils.sample_n_trajectories(
-                eval_env,
-                policy=agent,
-                ntraj=args.num_eval_trajectories,
-                max_length=ep_len,
-            )
-            returns = [t["episode_statistics"]["r"] for t in trajectories]
-            ep_lens = [t["episode_statistics"]["l"] for t in trajectories]
-
-            logger.log_scalar(np.mean(returns), "eval_return", num_step)
-            logger.log_scalar(np.mean(ep_lens), "eval_ep_len", num_step)
-
-            if len(returns) > 1:
-                logger.log_scalar(np.std(returns), "eval/return_std", num_step)
-                logger.log_scalar(np.max(returns), "eval/return_max", num_step)
-                logger.log_scalar(np.min(returns), "eval/return_min", num_step)
-                logger.log_scalar(np.std(ep_lens), "eval/ep_len_std", num_step)
-                logger.log_scalar(np.max(ep_lens), "eval/ep_len_max", num_step)
-                logger.log_scalar(np.min(ep_lens), "eval/ep_len_min", num_step)
-
-            if args.num_render_trajectories > 0:
-                video_trajectories = utils.sample_n_trajectories(
-                    render_env,
-                    agent,
-                    args.num_render_trajectories,
-                    ep_len,
-                    render=True,
-                )
-
-                logger.log_paths_as_videos(
-                    video_trajectories,
-                    num_step,
-                    fps=fps,
-                    max_videos_to_save=args.num_render_trajectories,
-                    video_title="eval_rollouts",
-                )
+            perf = utils.evaluate_performance(eval_env, agent, args.num_eval_trajectories, ep_len)
+            logger.log_metrics(perf, num_step)
 
         itr += 1
 

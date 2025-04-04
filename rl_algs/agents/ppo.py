@@ -35,6 +35,7 @@ class PPO:
         train_epoach=1,
         train_batch_size=128,
         gae_lambda=1.0,
+        clip_grad_norm=10.0
     ):
         # check if data is valid
         assert discount < 1.0 and discount > 0.0, f"discount = {discount}"
@@ -69,6 +70,7 @@ class PPO:
         self.train_epoach = train_epoach
         self.train_batch_size = train_batch_size
         self.gae_lambda = gae_lambda
+        self.clip_grad_norm = clip_grad_norm
 
     def get_action(self, observation: np.ndarray) -> np.ndarray:
         """
@@ -124,74 +126,6 @@ class PPO:
 
         return ptu.to_numpy(results)
 
-    def update(
-        self,
-        obs: Sequence[np.ndarray],
-        actions: Sequence[np.ndarray],
-        rewards: Sequence[np.ndarray],
-        terminals: Sequence[np.ndarray],
-        step: int,
-    ):
-        """
-        given sampled paths update agent parameters
-        """
-        # check inputs are not empty
-        assert (
-            len(obs) > 0 and obs[0].shape[1:] == self.observation_shape
-        ), f"obs has shape {obs[0].shape[1:]} while expect shape {self.observation_shape}\n obs[0] = {obs[0]}"
-
-        # concatenate obs, actions, rewards, terminals and q_values
-        obs = np.concatenate(obs, axis=0)
-        actions = np.concatenate(actions, axis=0)
-        rewards = np.concatenate(rewards, axis=0)
-        terminals = np.concatenate(terminals, axis=0)
-
-        # compute reward to go (namely q_values)
-        assert len(rewards.shape) == 1
-        # q_values = self._compute_reward_to_go(rewards, terminals)
-
-        # move above ndarrays to tensor
-        obs = ptu.from_numpy(obs)
-        actions = ptu.from_numpy(actions)
-        rewards = ptu.from_numpy(rewards)
-        terminals = ptu.from_numpy(terminals)
-        # q_values = ptu.from_numpy(q_values)
-
-        # bookmark old policy and old value
-        pi_old: torch.distributions.Distribution = self.actor(obs)
-        logits_old = pi_old.log_prob(actions).detach()
-        values_old = self.critic(obs).detach()  # [bsize, 1]
-
-        # compute advantage using these informations
-        # adv = self._compute_advantage(obs, rewards, q_values, terminals)
-        adv, q_values = compute_gae_advantage(
-            ptu.to_numpy(rewards),
-            ptu.to_numpy(values_old).reshape((-1,)),
-            ptu.to_numpy(terminals),
-            self.discount,
-            self.gae_lambda,
-        )
-        adv = ptu.from_numpy(adv)
-        q_values = ptu.from_numpy(q_values)
-
-        # update
-        update_info = self.update_actor_critic(
-            obs, actions, q_values, adv, logits_old, values_old
-        )
-
-        # use advantage to update actors
-        # actor_info = self.update_actor(obs, actions, adv)
-
-        # update reference actor when (step + 1) % reference_update_period == 0
-        # if (step + 1) % self.reference_update_period == 0:
-        # self.update_reference_actor()
-
-        # use q_values (reward to go) to update critic
-        # critic_info = self.update_critic(obs, q_values)
-
-        # return udpate infos
-        return update_info
-
     def update_actor_batch(
         self,
         obs: torch.Tensor,
@@ -218,8 +152,8 @@ class PPO:
             advantage = PPO.normalize(advantage, self.eps)
 
         # compute loss = min(ratio, clip(ratio, 1-eps, 1+eps)) * Advantage
-        loss = torch.clip(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps)
-        loss = torch.minimum(ratio * advantage, loss * advantage)
+        ratio_clip = torch.clip(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps)
+        loss = torch.minimum(ratio * advantage, ratio_clip * advantage)
         loss = -torch.mean(loss)
 
         # perform onestep of optimization
@@ -227,7 +161,7 @@ class PPO:
 
         # record gradient norm
         grad_norm = torch.nn.utils.clip_grad.clip_grad_norm_(
-            self.actor.parameters(), 10.0
+            self.actor.parameters(), self.clip_grad_norm
         )
 
         self.actor_optimizer.step()
@@ -245,28 +179,6 @@ class PPO:
             "actor_clip_fraction": clip_fraction,
         }
 
-    # def update_actor(
-    #     self, obs: torch.Tensor, actions: torch.Tensor, advantage: torch.Tensor
-    # ):
-    #     infos = []
-    #     n = len(obs)
-    #     for _ in range(self.train_epoach):
-    #         # generate shuffled indices
-    #         indices = np.random.permutation(n)
-
-    #         # handle each batch
-    #         for i in range(0, n, self.train_batch_size):
-    #             batch_idx = indices[i: i+self.train_batch_size]
-    #             info = self.update_actor_batch(obs[batch_idx], actions[batch_idx], advantage[batch_idx])
-    #             infos.append(info)
-
-    #     info_agg = {key: np.mean(list(info[key] for info in infos)) for key in infos[0]}
-
-    #     return info_agg
-
-    def update_reference_actor(self):
-        self.reference_actor.load_state_dict(self.actor.state_dict())
-
     def update_critic_batch(
         self, obs: torch.Tensor, q_values: torch.Tensor, values_old: torch.Tensor
     ):
@@ -275,6 +187,7 @@ class PPO:
         """
         # compute prediction at states using critic
         values = self.critic(obs)  # [bsize, 1]
+        assert values.shape == values_old.shape
 
         if self.clip_eps_vf is not None:
             diff = values - values_old
@@ -292,7 +205,7 @@ class PPO:
 
         # record critic gradient norm
         grad_norm = torch.nn.utils.clip_grad.clip_grad_norm_(
-            self.critic.parameters(), 10.0
+            self.critic.parameters(), self.clip_grad_norm
         )
 
         self.critic_optimizer.step()
@@ -308,122 +221,66 @@ class PPO:
 
         return info
 
-    # def update_critic(
-    #     self, obs: torch.Tensor, q_values: torch.Tensor
-    # ):
-    #     infos = []
-    #     n = len(obs)
-    #     for _ in range(self.train_epoach):
-    #         # generate shuffled indices
-    #         indices = np.random.permutation(n)
-
-    #         # handle each batch
-    #         for i in range(0, n, self.train_batch_size):
-    #             batch_idx = indices[i: i+self.train_batch_size]
-    #             info = self.update_critic_batch(obs[batch_idx], q_values[batch_idx])
-    #             infos.append(info)
-
-    #     info_agg = {key: np.mean(list(info[key] for info in infos)) for key in infos[0]}
-
-    #     return info_agg
-
-    def update_actor_critic(
-        self,
-        obs: torch.Tensor,
-        actions: torch.Tensor,
-        q_values: torch.Tensor,
-        advantage: torch.Tensor,
-        logits_old: torch.Tensor,
-        values_old: torch.Tensor,
-    ):
-        infos = []
-        n = len(obs)
-
-        # book mark old values
-        # values_old = self.critic(obs).detach() # [bsize, 1]
-
-        for _ in range(self.train_epoach):
-            # generate shuffled indices
-            indices = np.random.permutation(n)
-
-            # handle each batch
-            for i in range(0, n, self.train_batch_size):
-                batch_idx = indices[i : i + self.train_batch_size]
-                info_actor = self.update_actor_batch(
-                    obs[batch_idx],
-                    actions[batch_idx],
-                    advantage[batch_idx],
-                    logits_old[batch_idx],
-                )
-                info_critic = self.update_critic_batch(
-                    obs[batch_idx], q_values[batch_idx], values_old[batch_idx]
-                )
-                infos.append({**info_actor, **info_critic})
-
-        info_agg = {key: np.mean(list(info[key] for info in infos)) for key in infos[0]}
-
-        return info_agg
-
-    @torch.no_grad()
-    def _compute_advantage(
-        self,
-        obs: torch.Tensor,
-        rewards: torch.Tensor,
-        q_values: torch.Tensor,
-        terminals: torch.Tensor,
-    ):
-        """
-        compute advantage shall not result in gradient computation
-        """
-        # compute v(s) using critic
-        values = self.critic(obs)
-
-        # reshape v(s) to of shape (bsize, )
-        assert values.ndim == 2 and values.shape[1] == 1
-        values = values.squeeze(1)
-        assert values.shape == q_values.shape
-
-        # advantage = Q(s, a) - v(s)
-        advantage = q_values - values
-
-        # normalize advantage if required
-        # if self.normalize_advantage:
-        #     advantage = PPO.normalize(advantage, self.eps)
-
-        return advantage
-
-    def _compute_reward_to_go(
-        self, rewards: np.ndarray, terminals: np.ndarray
-    ) -> np.ndarray:
-        # check reward and terminal has the same shape
-        # check both reward and terminal not empty
-        # check terminal contains bool element
-        assert len(rewards.shape) == 1
-        assert rewards.shape == terminals.shape
-        assert len(rewards) > 0
-        assert isinstance(
-            terminals[0], np.float32
-        ), f"terminal is of type {type(terminals[0])}"
-        n = len(rewards)
-
-        rtgs = []
-        rtg = 0.0
-
-        for i in range(n - 1, -1, -1):
-            assert terminals[i] == 0.0 or terminals[i] == 1.0
-            rtg = (1.0 - terminals[i]) * rtg
-
-            rtg = rewards[i] + self.discount * rtg
-            rtgs.append(rtg)
-
-        rtgs.reverse()
-        return np.array(rtgs)
+    def apply_optimizer(self, loss, parameters, optimizer, lr_scheduler):
+        optimizer.zero_grad()
+        loss.backward()
+        grad_norm = nn.utils.clip_grad_norm_(parameters, self.clip_grad_norm)
+        optimizer.step()
+        lr_scheduler.step()
+        return grad_norm
 
     @staticmethod
     def normalize(adv: torch.Tensor, eps: float) -> torch.Tensor:
         """normalize advantage"""
         assert adv.ndim == 1
         return (adv - adv.mean()) / (adv.std() + eps)
+
+
+    def update_from_rb(self, rollout_buffer):
+        # # debug code----------------
+        # values_old = self.critic(ptu.from_numpy(rollout_buffer.observations)).detach()
+        # mse = F.mse_loss(values_old, ptu.from_numpy(rollout_buffer.values))
+        # assert (mse.item() < 1e-8)
+
+        # pi_old: torch.distributions.Distribution = self.actor(ptu.from_numpy(rollout_buffer.observations))
+        # logits_old = pi_old.log_prob(ptu.from_numpy(rollout_buffer.actions)).detach()
+        # mse = F.mse_loss(logits_old, ptu.from_numpy(rollout_buffer.logits))
+        # assert (mse.item() < 1e-8)
+        # # debug code----------------
+
+        infos = []
+        for batch in rollout_buffer.sample_batch(self.train_batch_size, self.train_epoach):
+            batch = ptu.from_numpy(batch)
+            info = self.update_on_batch(**batch)
+            infos.append(info)
+        
+        info_agg = {key: np.mean(list(info[key] for info in infos)) for key in infos[0]}
+
+        return info_agg
+
+    def update_on_batch(
+        self,
+        observations: torch.Tensor,
+        actions: torch.Tensor,
+        rewards: torch.Tensor,
+        returns: torch.Tensor,
+        dones: torch.Tensor,
+        logits_old: torch.Tensor,
+        advantages: torch.Tensor,
+        values_old: torch.Tensor    
+    ):
+        info_actor = self.update_actor_batch(
+            observations,
+            actions,
+            advantages,
+            logits_old,
+        )
+
+        info_critic = self.update_critic_batch(
+            observations, returns, values_old
+        )
+        
+        return {**info_actor, **info_critic}
 
 
 class RolloutBuffer:
@@ -542,3 +399,25 @@ class RolloutBuffer:
 
         # return rollout steps
         return len(self.observations)
+    
+    def sample_batch(self, batch_size, epoch):
+        for _ in range(epoch):
+            # generate shuffled indices
+            n = len(self.observations)
+            indices = np.random.permutation(n)
+
+            # handle each batch
+            for i in range(0, n, batch_size):
+                batch_idx = indices[i : i + batch_size]
+                batch = {
+                    'observations': self.observations[batch_idx],
+                    'actions': self.actions[batch_idx],
+                    'rewards': self.rewards[batch_idx],
+                    'returns': self.returns[batch_idx],
+                    'dones':   self.dones[batch_idx],
+                    'logits_old': self.logits[batch_idx],
+                    'advantages': self.advantages[batch_idx],
+                    'values_old': self.values[batch_idx]
+                }
+
+                yield batch

@@ -1,4 +1,5 @@
 # this file contains hand coded encoder for atari game frames
+from typing import Tuple
 import torch
 import torch.nn as nn
 from torch.distributions import Categorical
@@ -171,7 +172,39 @@ class CNNEncoder(nn.Module):
 
     def forward(self, x):
         return self.net(x)
+    
+class CNNActorCritic(nn.Module):
+    def __init__(self, num_action:int, share_encoder:bool = True):
+        super().__init__()
 
+        self.actor_encoder = CNNEncoder()
+        if share_encoder:
+            self.critic_encoder = self.actor_encoder
+
+        else:
+            self.critic_encoder = CNNEncoder()
+        
+        self.actor_head = nn.Linear(512, num_action)
+        self.critic_head = nn.Linear(512, 1)
+        self.share_encoder = share_encoder
+
+    # one forward returns action distribution and 
+    def forward(self, x: torch.Tensor) -> Tuple[torch.distributions.Categorical, torch.Tensor]:
+
+        features = self.actor_encoder(x)
+        logits = self.actor_head(features)
+        distribution = Categorical(logits=logits)
+
+        if self.share_encoder:
+            values = self.critic_head(features)
+
+        else:
+            values = self.critic_head(self.critic_encoder(x))
+
+        # remove last dim of values
+        values = values.squeeze(dim=-1)
+
+        return distribution, values
 
 class PreprocessAtari(nn.Module):
     def __init__(self):
