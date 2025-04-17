@@ -41,7 +41,8 @@ def run_training_loop(config: dict, logger: Logger, args: argparse.Namespace):
     num_step = 0
     itr = 0
     while num_step < total_steps:
-        num_step += rollout_buffer.rollout(agent, env, batch_size)
+        roll_step, _ = rollout_buffer.rollout(agent, env, batch_size)
+        num_step += roll_step
         train_info = agent.update_from_rb(rollout_buffer=rollout_buffer)
 
         # write logs

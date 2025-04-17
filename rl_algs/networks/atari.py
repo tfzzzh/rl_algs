@@ -171,6 +171,7 @@ class CNNEncoder(nn.Module):
         self.net = net
 
     def forward(self, x):
+        assert x.shape[1:] == (4, 84, 84)
         return self.net(x)
     
 class CNNActorCritic(nn.Module):

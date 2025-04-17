@@ -7,7 +7,8 @@ def compute_gae_advantage(
     values: np.ndarray,
     terminals: np.ndarray,
     gamma: float,
-    gae_lambda: float
+    gae_lambda: float,
+    recomputed_returns: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray]:
 
     n = len(rewards)
@@ -16,6 +17,10 @@ def compute_gae_advantage(
     assert len(rewards.shape) == 1 and len(values.shape) == 1 and len(terminals.shape) == 1
     assert gamma >= 0.0 and gamma <= 1.0
     assert gae_lambda >= 0.0 and gae_lambda <= 1.0
+
+    if recomputed_returns:
+        returns_next = 0.0
+        returns = np.zeros(n, dtype=rewards.dtype)
 
     advantages = np.zeros(n, dtype=rewards.dtype)
     for t in reversed(range(n)):
@@ -29,9 +34,15 @@ def compute_gae_advantage(
         # A_t = delta_t + gamma * lambda * A_{t+1}
         adv = delta + gamma * gae_lambda * (1.0 - terminals[t]) * adv_next
         advantages[t] = adv
+
+        # compute returns i
+        if recomputed_returns:
+            returns[t] = rewards[t] + gamma * (1.0 - terminals[t]) * returns_next
+            returns_next = returns[t]
     
     # return advantages and cumulative reward under the advantage
-    returns = advantages + values
+    if not recomputed_returns:
+        returns = advantages + values
     assert returns.shape == (n,)
 
     return advantages, returns
@@ -61,3 +72,23 @@ def compute_reward_to_go(
 
     rtgs.reverse()
     return np.array(rtgs)
+
+
+# From stable baselines
+def explained_variance(y_pred: np.ndarray, y_true: np.ndarray) -> float:
+    """
+    Computes fraction of variance that ypred explains about y.
+    Returns 1 - Var[y-ypred] / Var[y]
+
+    interpretation:
+        ev=0  =>  might as well have predicted zero
+        ev=1  =>  perfect prediction
+        ev<0  =>  worse than just predicting zero
+
+    :param y_pred: the prediction
+    :param y_true: the expected value
+    :return: explained variance of ypred and y
+    """
+    assert y_true.ndim == 1 and y_pred.ndim == 1
+    var_y = np.var(y_true)
+    return np.nan if var_y == 0 else float(1 - np.var(y_true - y_pred) / var_y)
